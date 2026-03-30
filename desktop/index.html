@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FixMyGame Scanner</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #050816;
+        color: white;
+      }
+
+      .wrap {
+        padding: 40px;
+      }
+
+      h1 {
+        font-size: 42px;
+        margin-bottom: 12px;
+      }
+
+      p {
+        color: #b8c0d9;
+        max-width: 700px;
+        line-height: 1.5;
+      }
+
+      button {
+        margin-top: 24px;
+        background: #2563eb;
+        color: white;
+        border: none;
+        padding: 14px 24px;
+        border-radius: 12px;
+        font-size: 18px;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #1d4ed8;
+      }
+
+      #status {
+        margin-top: 20px;
+        color: #9fb3ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>FixMyGame Scanner</h1>
+      <p>
+        Desktop scanner for modded games. This app will detect logs, mod folders,
+        crash reports, and system info, then send them to FixMyGame for diagnosis.
+      </p>
+
+      <button id="testBtn">Test Electron</button>
+      <div id="status"></div>
+    </div>
+
+    <script>
+      const btn = document.getElementById("testBtn");
+      const status = document.getElementById("status");
+
+      btn.addEventListener("click", () => {
+        status.textContent = window.fixMyGame.ping();
+      });
+    </script>
+  </body>
+</html>

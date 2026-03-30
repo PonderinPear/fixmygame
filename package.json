@@ -1,0 +1,19 @@
+{
+  "name": "fixmygame",
+  "version": "1.0.0",
+  "description": "FixMyGame monorepo root",
+  "private": true,
+  "scripts": {
+    "build:web": "cd web && npm run build",
+    "dev:web": "cd web && npm run dev",
+    "dev:desktop": "cd desktop && npm run dev",
+    "start:desktop": "cd desktop && npm run start",
+    "dist": "npm run build:web && cd desktop && npx electron-builder"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron-builder": "^26.8.1"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "desktop",
+  "version": "1.0.0",
+  "description": "FixMyGame desktop app",
+  "main": "main.js",
+  "author": "",
+  "license": "ISC",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "openai": "^6.22.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "electron": "^41.0.0"
+  },
+  "build": {
+    "appId": "com.fixmygame.app",
+    "productName": "FixMyGame",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "fileScanner.js",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/.next/standalone",
+        "to": "web-standalone"
+      },
+      {
+        "from": "../web/.next/static",
+        "to": "web-standalone/web/.next/static"
+      },
+      {
+    "from": "../web/public",
+    "to": "web-standalone/web/public"
+  }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
