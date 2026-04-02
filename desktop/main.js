@@ -5,6 +5,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const { scanLogsForGame, scanFolderRecursive } = require("./fileScanner");
 const isDev = !app.isPackaged;
+const os = require("os");
 
 let mainWindow;
 let nextServerProcess = null;
@@ -428,6 +429,71 @@ console.log("Loading app URL:", appUrl, "isDev:", isDev);
 writeStartupLog("Loading app URL:", appUrl, "isDev:", isDev);
 mainWindow.loadURL(appUrl);
 }
+
+function getCandidateInstallPaths(gameKey) {
+  const home = os.homedir();
+
+  const candidates = {
+    minecraft: [
+      path.join(home, "AppData", "Roaming", ".minecraft"),
+      path.join(home, "curseforge", "minecraft", "Instances"),
+      path.join(home, "AppData", "Roaming", "PrismLauncher", "instances"),
+    ],
+    sims4: [
+      path.join(home, "Documents", "Electronic Arts", "The Sims 4"),
+    ],
+    skyrimse: [
+      path.join(home, "Documents", "My Games", "Skyrim Special Edition"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Skyrim Special Edition"),
+    ],
+    fallout4: [
+      path.join(home, "Documents", "My Games", "Fallout4"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Fallout 4"),
+    ],
+    gmod: [
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "GarrysMod"),
+    ],
+    stardew_valley: [
+      path.join(home, "AppData", "Roaming", "StardewValley"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Stardew Valley"),
+    ],
+    cyberpunk2077: [
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Cyberpunk 2077"),
+      path.join("C:\\", "Program Files", "Cyberpunk 2077"),
+    ],
+  };
+
+  return candidates[gameKey] || [];
+}
+
+ipcMain.handle("detect-game-install", async (_event, gameKey) => {
+  try {
+    const candidates = getCandidateInstallPaths(gameKey);
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return {
+          ok: true,
+          detected: true,
+          path: candidate,
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      detected: false,
+      path: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detected: false,
+      path: null,
+      error: error instanceof Error ? error.message : "Install detection failed.",
+    };
+  }
+});
 
 ipcMain.handle("open-folder-path", async (_event, targetPath) => {
   try {

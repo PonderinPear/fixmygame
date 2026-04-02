@@ -36,6 +36,12 @@ openFolderPath?: (targetPath: string) => Promise<{
   path?: string;
   error?: string;
 }>;
+detectGameInstall?: (gameKey: string) => Promise<{
+  ok?: boolean;
+  detected?: boolean;
+  path?: string | null;
+  error?: string;
+}>;
     };
   }
 }
@@ -1201,7 +1207,10 @@ export default function Page() {
   const [graphicsApiMode, setGraphicsApiMode] = useState("Auto Detect");
   const [crashLog, setCrashLog] = useState("");
   const [currentLogPath, setCurrentLogPath] = useState("");
-
+  const [gameInstallDetected, setGameInstallDetected] = useState<boolean | null>(null);
+  const [gameInstallPath, setGameInstallPath] = useState("");
+  const [checkingInstall, setCheckingInstall] = useState(false);
+  
   const [isPro, setIsPro] = useState(false);
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
@@ -1310,6 +1319,10 @@ setDebugProStatus(
   };
 }, []);
 
+useEffect(() => {
+  detectSelectedGameInstall(selectedGameKey);
+}, [selectedGameKey]);
+
   function showCrashLogHelp() {
   const helpText: Record<string, string> = {
     minecraft: `Minecraft (CurseForge / Forge / Fabric / Prism / Modrinth):
@@ -1355,6 +1368,34 @@ setDebugProStatus(
 - Use "Load Crash Log From Computer" to choose a relevant log manually
 - Or use "Scan Entire Folder" to search the game folder for useful logs`
   );
+}
+
+async function detectSelectedGameInstall(gameKey = selectedGameKey) {
+  if (!window.fixMyGame?.detectGameInstall) {
+    setGameInstallDetected(null);
+    setGameInstallPath("");
+    return;
+  }
+
+  try {
+    setCheckingInstall(true);
+
+    const response = await window.fixMyGame.detectGameInstall(gameKey);
+
+    if (!response?.ok) {
+      setGameInstallDetected(false);
+      setGameInstallPath("");
+      return;
+    }
+
+    setGameInstallDetected(Boolean(response.detected));
+    setGameInstallPath(response.path || "");
+  } catch {
+    setGameInstallDetected(false);
+    setGameInstallPath("");
+  } finally {
+    setCheckingInstall(false);
+  }
 }
 
   async function loadLogFromComputer() {
@@ -1867,6 +1908,7 @@ async function openGameSettingsQuickAction() {
   }
 
   const hasDetectedGame =
+    Boolean(gameInstallDetected) ||
     Boolean(detectedSignals?.loader) ||
     Boolean(detectedSignals?.gameVersion);
 
@@ -1881,11 +1923,14 @@ async function openGameSettingsQuickAction() {
   const hasAnyEvidence = hasDetectedGame || hasCrashEvidence;
 
   if (!hasAnyEvidence) {
-    setErrorMsg(
-      `No ${gameTitle} installation or crash logs were detected on this device yet.`
-    );
+  if (!hasScannedLogs && !crashLog.trim()) {
+    // User hasn't done anything yet → don't show error
     return;
   }
+
+  setErrorMsg(`No ${gameTitle} installation or crash logs were detected on this device yet.`);
+  return;
+}
 
   if (selectedGameKey === "minecraft") {
     const openedLogs = await openLogsFolder(true);
@@ -2011,11 +2056,35 @@ async function openGameSettingsQuickAction() {
   >
     {desktopConnected ? "Desktop Connected" : "Browser Mode"}
   </span>
+  <span
+  className={[
+    "rounded-full px-3 py-1 text-xs font-medium",
+    checkingInstall
+      ? "border border-white/10 bg-white/5 text-white/70"
+      : gameInstallDetected
+      ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+      : "border border-white/10 bg-white/5 text-white/70",
+  ].join(" ")}
+>
+  {checkingInstall
+    ? `Checking ${gameTitle} install...`
+    : gameInstallDetected
+    ? `${gameTitle} Detected`
+    : `No ${gameTitle} Install Detected`}
+</span>
 </div>
 
 <div className="mt-3 p-3 rounded-lg bg-white/5 text-xs leading-relaxed break-words">
-<div><strong>Local vid:</strong> {debugVid || "none"}</div>
+  <div><strong>Local vid:</strong> {debugVid || "none"}</div>
   <div><strong>Server debug:</strong> {debugProStatus || "loading..."}</div>
+  <div>
+    <strong>Install detection:</strong>{" "}
+    {checkingInstall
+      ? "checking..."
+      : gameInstallDetected
+      ? gameInstallPath || "detected"
+      : "not detected"}
+  </div>
 </div>
 
       <section className="mt-10 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
@@ -2399,11 +2468,11 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
 
-          {errorMsg ? (
-            <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
-              {errorMsg}
-            </div>
-          ) : null}
+          {errorMsg && (hasScannedLogs || crashLog.trim().length > 0) ? (
+  <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+    {errorMsg}
+  </div>
+) : null}
         </div>
       </section>
 
