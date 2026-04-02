@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
+const dotenv = require("dotenv");
 const fs = require("fs");
 const { spawn } = require("child_process");
 const { scanLogsForGame, scanFolderRecursive } = require("./fileScanner");
@@ -294,6 +295,23 @@ function getLogsFolderForGame(gameKey) {
   return candidates.find(exists) || null;
 }
 
+function loadEnvFile() {
+  try {
+    const envPath = isDev
+      ? path.join(__dirname, "../web/.env.local")
+      : path.join(process.resourcesPath, "web-standalone", "web", ".env.local");
+
+    if (fs.existsSync(envPath)) {
+      dotenv.config({ path: envPath });
+      writeStartupLog("Loaded env file:", envPath);
+    } else {
+      writeStartupLog("Env file not found:", envPath);
+    }
+  } catch (error) {
+    writeStartupLog("Failed to load env file:", error?.message || error);
+  }
+}
+
 function startNextServer() {
   return new Promise((resolve, reject) => {
     let serverProcess;
@@ -410,6 +428,33 @@ console.log("Loading app URL:", appUrl, "isDev:", isDev);
 writeStartupLog("Loading app URL:", appUrl, "isDev:", isDev);
 mainWindow.loadURL(appUrl);
 }
+
+ipcMain.handle("open-folder-path", async (_event, targetPath) => {
+  try {
+    if (!targetPath || typeof targetPath !== "string") {
+      return { ok: false, error: "No target path provided." };
+    }
+
+    const folderPath = path.dirname(targetPath);
+
+    if (!fs.existsSync(folderPath)) {
+      return { ok: false, error: `Folder not found: ${folderPath}` };
+    }
+
+    const openResult = await shell.openPath(folderPath);
+
+    if (openResult) {
+      return { ok: false, error: openResult };
+    }
+
+    return { ok: true, path: folderPath };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to open folder path.",
+    };
+  }
+});
 
 ipcMain.handle("pick-log-file", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -542,6 +587,7 @@ ipcMain.handle("file:saveText", async (_event, { defaultPath, content }) => {
 });
 
 app.whenReady().then(async () => {
+  loadEnvFile();
   try {
       await startNextServer();
 

@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld("fixMyGame", {
     ipcRenderer.invoke("file:saveText", { defaultPath, content }),
   openModsFolder: (gameKey) => ipcRenderer.invoke("open-mods-folder", gameKey),
   openLogsFolder: (gameKey) => ipcRenderer.invoke("open-logs-folder", gameKey),
+  openFolderPath: (targetPath) => ipcRenderer.invoke("open-folder-path", targetPath),
 });

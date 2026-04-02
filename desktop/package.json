@@ -11,6 +11,7 @@
     "dist": "electron-builder"
   },
   "dependencies": {
+    "dotenv": "^17.4.0",
     "openai": "^6.22.0",
     "zod": "^4.3.6"
   },
@@ -39,9 +40,13 @@
         "to": "web-standalone/web/.next/static"
       },
       {
-    "from": "../web/public",
-    "to": "web-standalone/web/public"
-  }
+        "from": "../web/public",
+        "to": "web-standalone/web/public"
+      },
+      {
+        "from": "../web/.env.local",
+        "to": "web-standalone/web/.env.local"
+      }
     ],
     "win": {
       "target": "nsis"
