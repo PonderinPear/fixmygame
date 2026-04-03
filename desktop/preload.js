@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, clipboard } = require("electron");
 
 contextBridge.exposeInMainWorld("fixMyGame", {
   ping: () => "Electron is working",
@@ -13,4 +13,15 @@ contextBridge.exposeInMainWorld("fixMyGame", {
   openLogsFolder: (gameKey) => ipcRenderer.invoke("open-logs-folder", gameKey),
   openFolderPath: (targetPath) => ipcRenderer.invoke("open-folder-path", targetPath),
   detectGameInstall: (gameKey) => ipcRenderer.invoke("detect-game-install", gameKey),
+  copyText: async (text) => {
+    try {
+      clipboard.writeText(String(text ?? ""));
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to copy text.",
+      };
+    }
+  },
 });

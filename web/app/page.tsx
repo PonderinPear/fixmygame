@@ -42,6 +42,10 @@ detectGameInstall?: (gameKey: string) => Promise<{
   path?: string | null;
   error?: string;
 }>;
+copyText?: (text: string) => Promise<{
+        ok?: boolean;
+        error?: string;
+      }>;
     };
   }
 }
@@ -85,6 +89,38 @@ type CheckoutResponse = {
   url: string;
 };
 
+type FixAction = {
+  id: string;
+  type: "open_mods_folder" | "open_logs_folder" | "copy_fix_steps";
+  title: string;
+  description: string;
+  risk: "low" | "medium" | "high";
+  reversible: boolean;
+};
+
+type FixExecutionResult = {
+  id: string;
+  title: string;
+  ok: boolean;
+  detail: string;
+};
+
+type FixPlan = {
+  title: string;
+  description: string;
+  actions: FixAction[];
+};
+
+type FixHistoryItem = {
+  id: string;
+  createdAt: number;
+  gameKey: string;
+  gameTitle: string;
+  type: "quick_fix" | "full_result" | "suspected_mods" | "fix_plan";
+  title: string;
+  text: string;
+};
+
 type ApiErrorShape = {
   error?: string;
   message?: string;
@@ -92,6 +128,34 @@ type ApiErrorShape = {
 
 function isApiErrorShape(x: unknown): x is ApiErrorShape {
   return typeof x === "object" && x !== null;
+}
+
+const FIX_HISTORY_STORAGE_KEY = "fmg_fix_history";
+
+function loadFixHistory(): FixHistoryItem[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(FIX_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as FixHistoryItem[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFixHistory(items: FixHistoryItem[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FIX_HISTORY_STORAGE_KEY, JSON.stringify(items));
+}
+
+function pushFixHistoryItem(item: FixHistoryItem) {
+  const current = loadFixHistory();
+  const next = [item, ...current].slice(0, 50);
+  saveFixHistory(next);
+  return next;
 }
 
 function getOrCreateDeviceId() {
@@ -151,6 +215,89 @@ async function fetchJSON<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   }
 
   return parsed as T;
+}
+
+function getFixPlan(
+  gameKey: string,
+  gameTitle: string,
+  analysis: AnalyzeResponse["analysis"] | null,
+  detectedSignals: AnalyzeResponse["detectedSignals"] | null,
+  selectedGameProfile: {
+    label: string;
+    supportsAutoDetect: boolean;
+    supportsModsFolder: boolean;
+    supportsLogsFolder: boolean;
+  }
+): FixPlan | null {
+  if (!analysis) return null;
+
+  const actions: FixAction[] = [];
+
+  if (selectedGameProfile.supportsModsFolder) {
+    actions.push({
+      id: "open_mods_folder",
+      type: "open_mods_folder",
+      title: `Open ${gameTitle} mods folder`,
+      description:
+        "Open the local mods folder so you can review, disable, or remove suspected mods.",
+      risk: "low",
+      reversible: false,
+    });
+  }
+
+  if (selectedGameProfile.supportsLogsFolder) {
+    actions.push({
+      id: "open_logs_folder",
+      type: "open_logs_folder",
+      title: `Open ${gameTitle} logs folder`,
+      description:
+        "Open the local crash/logs folder so you can inspect logs or compare future crashes.",
+      risk: "low",
+      reversible: false,
+    });
+  }
+
+  actions.push({
+    id: "copy_fix_steps",
+    type: "copy_fix_steps",
+    title: "Copy recommended fix steps",
+    description:
+      "Copy the exact Quick Fix and recommended repair steps to your clipboard.",
+    risk: "low",
+    reversible: false,
+  });
+
+  const category = detectedSignals?.likelyCategory ?? "unknown";
+
+  return {
+    title:
+      category === "missing_dependency"
+        ? "Missing dependency repair preview"
+        : category === "mixin_failure"
+        ? "Mixin failure repair preview"
+        : category === "java_mismatch"
+        ? "Java mismatch repair preview"
+        : category === "loader_mismatch"
+        ? "Loader mismatch repair preview"
+        : category === "mod_conflict"
+        ? "Mod conflict repair preview"
+        : "Repair preview",
+    description:
+      "FixMyGame will only perform safe helper actions for now. Direct file-changing repairs like disabling or moving mods will come in a later update with backup and rollback support.",
+    actions,
+  };
+}
+
+function getRiskClasses(risk: FixAction["risk"]) {
+  if (risk === "low") {
+    return "border-emerald-400/20 bg-emerald-400/10 text-emerald-200";
+  }
+
+  if (risk === "medium") {
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-200";
+  }
+
+  return "border-red-400/20 bg-red-400/10 text-red-200";
 }
 
 function getSmartFixPath(
@@ -958,24 +1105,24 @@ function getProModalContent(
 ) {
   switch (context) {
     case "autoDetect":
-  return {
+    return {
     eyebrow: "FIXMYGAME PRO",
     title: `Upgrade to unlock automatic ${gameLabel} log discovery`,
     description:
-      `FixMyGame Pro can automatically find ${gameLabel} logs, load the best candidate, and start your troubleshooting workflow faster.`,
+      `FixMyGame Pro can automatically find likely ${gameLabel} logs, load the best candidate, and speed up your troubleshooting workflow.`,
     features: [
       "Unlimited diagnostics",
-      `Auto Detect ${gameLabel} Logs`,
-      "Scan Entire Folder",
-      "Save Analysis",
+      `Automatic ${gameLabel} log discovery`,
+      "Full-folder scanning",
+      "Saved analysis exports",
       "Faster troubleshooting workflow",
       "Smarter file discovery",
-      "Better future multi-game support",
+      "Future multi-game support",
     ],
   };
 
     case "folderScan":
-  return {
+    return {
     eyebrow: "FIXMYGAME PRO",
     title: "Upgrade to unlock full-folder scanning",
     description:
@@ -992,7 +1139,7 @@ function getProModalContent(
   };
 
     case "saveAnalysis":
-  return {
+    return {
     eyebrow: "FIXMYGAME PRO",
     title: "Upgrade to unlock saved analysis exports",
     description:
@@ -1009,16 +1156,16 @@ function getProModalContent(
   };
 
     default:
-  return {
+    return {
     eyebrow: "FIXMYGAME PRO",
     title: "Upgrade to unlock the full desktop workflow",
     description:
-      `FixMyGame Pro gives you the fastest way to diagnose ${gameLabel} crashes without manual digging.`,
+      `FixMyGame Pro gives you a faster, more complete way to diagnose ${gameLabel} crashes without manual digging.`,
     features: [
       "Unlimited diagnostics",
-      `Auto Detect ${gameLabel} Logs`,
-      "Scan Entire Folder",
-      "Save Analysis",
+      `Automatic ${gameLabel} log discovery`,
+      "Full-folder scanning",
+      "Saved analysis exports",
       "Faster troubleshooting workflow",
     ],
   };
@@ -1225,6 +1372,8 @@ export default function Page() {
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showFixGuide, setShowFixGuide] = useState(false);
+  const [showFixPreviewModal, setShowFixPreviewModal] = useState(false);
+  const [showFixHistoryModal, setShowFixHistoryModal] = useState(false);
   const [showProModal, setShowProModal] = useState(false);
   const [desktopConnected, setDesktopConnected] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
@@ -1240,7 +1389,10 @@ export default function Page() {
     error?: string | null;
   }>({});
   const [debugVid, setDebugVid] = useState("");
-const [debugProStatus, setDebugProStatus] = useState("");
+  const [debugProStatus, setDebugProStatus] = useState("");
+  const [fixExecutionResults, setFixExecutionResults] = useState<FixExecutionResult[]>([]);
+  const [runningFixPlan, setRunningFixPlan] = useState(false);
+  const [fixHistoryItems, setFixHistoryItems] = useState<FixHistoryItem[]>([]);
   const [logHighlights, setLogHighlights] = useState<string[]>([]);
   const [liveMods, setLiveMods] = useState<string[]>([]);
   const [mostSuspiciousLine, setMostSuspiciousLine] = useState<string | null>(null);
@@ -1261,6 +1413,74 @@ const gameTitle = selectedGame.label;
   [proModalContext, gameTitle]
 );
 
+async function copyTextReliable(text: string) {
+  const safeText = String(text ?? "");
+
+  if (window.fixMyGame?.copyText) {
+    const response = await window.fixMyGame.copyText(safeText);
+    if (response?.ok) {
+      return;
+    }
+  }
+
+  try {
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
+      await navigator.clipboard.writeText(safeText);
+      return;
+    }
+  } catch {
+    // fall through to execCommand fallback
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = safeText;
+  textArea.style.position = "fixed";
+  textArea.style.opacity = "0";
+  textArea.style.pointerEvents = "none";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+
+  let success = false;
+
+  try {
+    success = document.execCommand("copy");
+  } catch {
+    success = false;
+  }
+
+  document.body.removeChild(textArea);
+
+  if (!success) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
+function addToFixHistory(
+  type: FixHistoryItem["type"],
+  title: string,
+  text: string
+) {
+  const item: FixHistoryItem = {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+    gameKey: selectedGameKey,
+    gameTitle,
+    type,
+    title,
+    text,
+  };
+
+  const next = pushFixHistoryItem(item);
+  setFixHistoryItems(next);
+}
+
 const selectedGameProfile = useMemo(
   () => GAME_PROFILES[selectedGameKey] ?? GAME_PROFILES.minecraft,
   [selectedGameKey]
@@ -1269,6 +1489,18 @@ const selectedGameProfile = useMemo(
 const topFeaturePills = useMemo(
   () => getTopFeaturePills(selectedGameKey),
   [selectedGameKey]
+);
+
+const fixPlan = useMemo(
+  () =>
+    getFixPlan(
+      selectedGameKey,
+      gameTitle,
+      analysis,
+      detectedSignals,
+      selectedGameProfile
+    ),
+  [selectedGameKey, gameTitle, analysis, detectedSignals, selectedGameProfile]
 );
 
 useEffect(() => {
@@ -1282,6 +1514,7 @@ if (typeof window !== "undefined") {
 
   document.cookie = `vid=${vid}; path=/; max-age=31536000; SameSite=Lax`;
   setDebugVid(vid);
+  setFixHistoryItems(loadFixHistory());
 }
   let cancelled = false;
 
@@ -1845,17 +2078,31 @@ async function copyResult() {
 
   if (!textToCopy.trim()) return;
 
+  addToFixHistory("full_result", `${gameTitle} diagnostic result`, textToCopy);
+
   try {
-    await navigator.clipboard.writeText(textToCopy);
+    await copyTextReliable(textToCopy);
     setCopied(true);
+    setActionMsg("Copied to system clipboard and saved to Fix History.");
 
     setTimeout(() => {
       setCopied(false);
-    }, 1500);
-  } catch {
-    setErrorMsg("Failed to copy result.");
+      setActionMsg("");
+    }, 1800);
+  } catch (error: unknown) {
+    setCopied(false);
+    setActionMsg("Saved to Fix History. System clipboard copy failed on this device.");
+
+    setTimeout(() => {
+      setActionMsg("");
+    }, 2500);
+
+    setErrorMsg(
+      error instanceof Error ? error.message : "Failed to copy result."
+    );
   }
 }
+
 async function applyQuickFix() {
   if (!analysis) {
     setErrorMsg("Run a diagnostic first.");
@@ -1869,16 +2116,124 @@ async function applyQuickFix() {
     ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
   ].join("\n");
 
+  addToFixHistory("quick_fix", `${gameTitle} quick fix`, quickFixText);
+
   try {
-    await navigator.clipboard.writeText(quickFixText);
-    setActionMsg("Quick fix copied to clipboard. Start with step 1.");
+    await copyTextReliable(quickFixText);
+    setShowFixPreviewModal(false);
+    setActionMsg("Quick fix copied to clipboard and saved to Fix History.");
 
     setTimeout(() => {
       setActionMsg("");
     }, 2000);
-  } catch {
-    setErrorMsg("Failed to copy quick fix.");
+  } catch (error: unknown) {
+    setShowFixPreviewModal(false);
+    setActionMsg("Quick fix saved to Fix History. System clipboard copy failed on this device.");
+
+    setTimeout(() => {
+      setActionMsg("");
+    }, 2500);
+
+    setErrorMsg(
+      error instanceof Error ? error.message : "Failed to copy quick fix."
+    );
   }
+}
+async function runFixPlan() {
+  if (!fixPlan || !analysis) {
+    setErrorMsg("Run a diagnostic first.");
+    return;
+  }
+
+  setRunningFixPlan(true);
+  setErrorMsg("");
+  setActionMsg("");
+  setFixExecutionResults([]);
+
+    addToFixHistory(
+    "fix_plan",
+    `${gameTitle} fix plan`,
+    [
+      fixPlan.title,
+      "",
+      fixPlan.description,
+      "",
+      ...fixPlan.actions.map(
+        (action, index) =>
+          `${index + 1}. ${action.title} — ${action.description} [${action.risk} risk]`
+      ),
+    ].join("\n")
+  );
+
+  const results: FixExecutionResult[] = [];
+
+  for (const action of fixPlan.actions) {
+    if (action.type === "open_mods_folder") {
+      const ok = await openModsFolder(true);
+      results.push({
+        id: action.id,
+        title: action.title,
+        ok,
+        detail: ok
+          ? "Mods folder opened successfully."
+          : "Could not open the mods folder on this device.",
+      });
+      continue;
+    }
+
+    if (action.type === "open_logs_folder") {
+      const ok = await openLogsFolder(true);
+      results.push({
+        id: action.id,
+        title: action.title,
+        ok,
+        detail: ok
+          ? "Logs folder opened successfully."
+          : "Could not open the logs folder on this device.",
+      });
+      continue;
+    }
+
+    if (action.type === "copy_fix_steps") {
+      const quickFixText = [
+        `Quick Fix First: ${analysis.quickFixFirst}`,
+        "",
+        "Recommended Fix Steps:",
+        ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
+      ].join("\n");
+
+      try {
+        await copyTextReliable(quickFixText);
+        results.push({
+          id: action.id,
+          title: action.title,
+          ok: true,
+          detail: "Fix steps copied to clipboard.",
+        });
+      } catch (error: unknown) {
+        results.push({
+          id: action.id,
+          title: action.title,
+          ok: false,
+          detail:
+            error instanceof Error ? error.message : "Failed to copy fix steps.",
+        });
+      }
+    }
+  }
+
+  setFixExecutionResults(results);
+  setRunningFixPlan(false);
+  setShowFixPreviewModal(false);
+
+  const successCount = results.filter((r) => r.ok).length;
+  const totalCount = results.length;
+
+  setActionMsg(`Fix plan finished: ${successCount}/${totalCount} safe actions completed.`);
+
+  setTimeout(() => {
+    setActionMsg("");
+  }, 3500);
 }
 
 function openStepByStepGuide() {
@@ -1888,6 +2243,17 @@ function openStepByStepGuide() {
   }
 
   setShowFixGuide(true);
+}
+
+function deleteFixHistoryItem(id: string) {
+  const next = fixHistoryItems.filter((item) => item.id !== id);
+  setFixHistoryItems(next);
+  saveFixHistory(next);
+}
+
+function clearFixHistory() {
+  setFixHistoryItems([]);
+  saveFixHistory([]);
 }
 
 async function openGameSettingsQuickAction() {
@@ -2381,11 +2747,13 @@ if (value.trim().length > 40) {
   onClick={runDiagnostic}
   disabled={!canRun || running}
 >
-  {running ? (
+    {running ? (
     <>
       <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
       Running Diagnostic...
     </>
+  ) : !canRun && !isPro ? (
+    "Free Limit Reached — Upgrade to Pro"
   ) : (
     `Run ${gameTitle} Diagnostic`
   )}
@@ -2429,10 +2797,10 @@ if (value.trim().length > 40) {
     disabled={!analysis}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    ⚡ Apply Quick Fix (Recommended)
+    ⚡ Copy Quick Fix (Recommended)
   </button>
 
-  <button
+    <button
     type="button"
     onClick={openStepByStepGuide}
     disabled={!analysis}
@@ -2443,12 +2811,40 @@ if (value.trim().length > 40) {
 
   <button
     type="button"
+    onClick={() => {
+      if (!fixPlan) {
+        setErrorMsg("Run a diagnostic first.");
+        return;
+      }
+      setFixExecutionResults([]);
+      setShowFixPreviewModal(true);
+    }}
+    disabled={!analysis || !fixPlan}
+    className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    🛠️ Let App Fix Now
+  </button>
+
+    <button
+    type="button"
+    onClick={() => setShowFixHistoryModal(true)}
+    className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30"
+  >
+    🗂️ Open Fix History
+  </button>
+
+  <button
+    type="button"
     onClick={openGameSettingsQuickAction}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30"
   >
     📂 Open Game Settings
   </button>
-</div>
+  </div>
+
+  <div className="mt-3 text-xs text-white/55">
+    Currently copies the recommended repair steps. Automated fixes with permission are planned for a future update.
+  </div>
 </div>
 
 {!loadingLimit && !isPro && remaining <= 0 ? (
@@ -2457,7 +2853,7 @@ if (value.trim().length > 40) {
       You’ve used all free diagnostics today.
     </div>
     <div className="mt-1 text-amber-100/90">
-  Unlock unlimited diagnostics, Auto Detect {gameTitle} Logs, Scan Entire Folder, Save Analysis, and faster troubleshooting workflows with Pro.
+  Unlock unlimited diagnostics, automatic log discovery, full-folder scanning, saved analysis exports, and a faster troubleshooting workflow with Pro.
 </div>
   </div>
 ) : null}
@@ -2468,11 +2864,44 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
 
-          {errorMsg && (hasScannedLogs || crashLog.trim().length > 0) ? (
-  <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
-    {errorMsg}
+{fixExecutionResults.length > 0 ? (
+  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="text-xs font-semibold tracking-widest text-white/60">
+      FIX PLAN RESULTS
+    </div>
+
+    <div className="mt-3 grid gap-2">
+      {fixExecutionResults.map((item) => (
+        <div
+          key={item.id}
+          className="rounded-xl border border-white/10 bg-black/20 px-3 py-3"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-medium text-white">{item.title}</div>
+            <span
+              className={[
+                "rounded-full px-2.5 py-1 text-xs font-semibold",
+                item.ok
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : "bg-red-500/20 text-red-300",
+              ].join(" ")}
+            >
+              {item.ok ? "Done" : "Failed"}
+            </span>
+          </div>
+
+          <div className="mt-2 text-sm text-white/70">{item.detail}</div>
+        </div>
+      ))}
+    </div>
   </div>
 ) : null}
+
+                    {errorMsg ? (
+            <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+              {errorMsg}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -2583,22 +3012,35 @@ if (value.trim().length > 40) {
   <button
     type="button"
     onClick={async () => {
-      const modsText =
+            const modsText =
         detectedSignals?.suspectedMods?.length
           ? detectedSignals.suspectedMods.join(", ")
           : liveMods.length
           ? liveMods.join(", ")
           : "No suspected mods detected.";
 
+      addToFixHistory("suspected_mods", `${gameTitle} suspected mods`, modsText);
+
       try {
-        await navigator.clipboard.writeText(modsText);
+        await copyTextReliable(modsText);
         setCopied(true);
+        setActionMsg("Suspected mods copied and saved to Fix History.");
+
+                setTimeout(() => {
+          setCopied(false);
+          setActionMsg("");
+        }, 1500);
+      } catch (error: unknown) {
+        setCopied(false);
+        setActionMsg("Suspected mods saved to Fix History. System clipboard copy failed on this device.");
 
         setTimeout(() => {
-          setCopied(false);
-        }, 1500);
-      } catch {
-        setErrorMsg("Failed to copy suspected mods.");
+          setActionMsg("");
+        }, 2500);
+
+        setErrorMsg(
+          error instanceof Error ? error.message : "Failed to copy suspected mods."
+        );
       }
     }}
     className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
@@ -2647,7 +3089,7 @@ if (value.trim().length > 40) {
       : "border border-amber-400/20 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15",
   ].join(" ")}
 >
-  {isPro ? (saved ? "Saved!" : "Save Analysis") : "Save Analysis (Pro)"}
+    {isPro ? (saved ? "Saved!" : "Save Analysis") : "Save Export (Pro)"}
 </button>
 
   <button
@@ -2834,8 +3276,212 @@ if (value.trim().length > 40) {
           onClick={applyQuickFix}
           className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400"
         >
-          Copy Quick Fix
+          Copy Fix Steps
         </button>
+      </div>
+    </div>
+  </div>
+) : null}
+{showFixPreviewModal && fixPlan ? (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+    onClick={() => {
+      if (!runningFixPlan) setShowFixPreviewModal(false);
+    }}
+  >
+    <div
+      className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        FIX PREVIEW
+      </div>
+
+      <h2 className="mt-2 text-2xl font-bold text-white">
+        {fixPlan.title}
+      </h2>
+
+      <p className="mt-3 text-white/75">
+        {fixPlan.description}
+      </p>
+
+      <div className="mt-5 rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+        <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
+          WHAT FIXMYGAME WILL DO NOW
+        </div>
+        <div className="mt-2 text-white/90">
+          Only safe helper actions will run in this version. Direct file edits, mod disabling, mod moves, and launcher changes are planned for a later update with backups and rollback support.
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {fixPlan.actions.map((action) => (
+          <div
+            key={action.id}
+            className="rounded-xl border border-white/10 bg-white/5 px-4 py-4"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-semibold text-white">{action.title}</div>
+
+              <span
+                className={[
+                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide",
+                  getRiskClasses(action.risk),
+                ].join(" ")}
+              >
+                {action.risk} risk
+              </span>
+
+              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/70">
+                {action.reversible ? "reversible" : "no file change"}
+              </span>
+            </div>
+
+            <div className="mt-2 text-sm text-white/75">
+              {action.description}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 flex flex-wrap justify-end gap-3">
+        <button
+          type="button"
+          onClick={() => setShowFixPreviewModal(false)}
+          disabled={runningFixPlan}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={applyQuickFix}
+          disabled={runningFixPlan}
+          className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Copy Steps Instead
+        </button>
+
+        <button
+          type="button"
+          onClick={runFixPlan}
+          disabled={runningFixPlan}
+          className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {runningFixPlan ? "Running Safe Fixes..." : "Proceed"}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+{showFixHistoryModal ? (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+    onClick={() => setShowFixHistoryModal(false)}
+  >
+    <div
+      className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+            FIX HISTORY
+          </div>
+
+          <h2 className="mt-2 text-2xl font-bold text-white">
+            Your saved FixMyGame copies
+          </h2>
+
+          <p className="mt-2 text-white/75">
+            This history is private to this device and stores items copied from FixMyGame, even if system clipboard copy fails.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowFixHistoryModal(false)}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-5 flex flex-wrap justify-end gap-3">
+        <button
+          type="button"
+          onClick={clearFixHistory}
+          disabled={fixHistoryItems.length === 0}
+          className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-red-200 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Clear All
+        </button>
+      </div>
+
+      <div className="mt-5 max-h-[460px] space-y-3 overflow-y-auto pr-1">
+        {fixHistoryItems.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/70">
+            No saved items yet. Copy a quick fix, result, suspected mods, or fix plan to start building your Fix History.
+          </div>
+        ) : (
+          fixHistoryItems.map((item) => (
+            <div
+              key={item.id}
+              className="rounded-xl border border-white/10 bg-white/5 p-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-white">{item.title}</div>
+                  <div className="mt-1 text-xs text-white/50">
+                    {item.gameTitle} • {new Date(item.createdAt).toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await copyTextReliable(item.text);
+                        setActionMsg("History item copied to system clipboard.");
+
+                        setTimeout(() => {
+                          setActionMsg("");
+                        }, 1800);
+                      } catch (error: unknown) {
+                        setActionMsg("System clipboard copy failed on this device, but the item remains saved in Fix History.");
+
+                        setTimeout(() => {
+                          setActionMsg("");
+                        }, 2500);
+
+                        setErrorMsg(
+                          error instanceof Error ? error.message : "Failed to copy Fix History item."
+                        );
+                      }
+                    }}
+                    className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-1.5 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
+                  >
+                    Copy Again
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteFixHistoryItem(item.id)}
+                    className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-200 transition hover:bg-red-500/15"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              <pre className="mt-3 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-black/20 p-3 text-sm text-white/85">
+                {item.text}
+              </pre>
+            </div>
+          ))
+        )}
       </div>
     </div>
   </div>
