@@ -214,17 +214,78 @@ function getLogDirectoriesForRoot(rootDir) {
   return candidates.filter(exists);
 }
 
+function isUsefulLogForGame(gameKey, fileName, fullPath) {
+  const lowerName = fileName.toLowerCase();
+  const lowerPath = fullPath.toLowerCase();
+
+  if (gameKey === "minecraft") {
+  if (lowerPath.includes("\\telemetry\\") || lowerPath.includes("/telemetry/")) {
+    return false;
+  }
+
+  if (
+    lowerName === "options.txt" ||
+    lowerName === "usercache.json" ||
+    lowerName === "realms_persistence.json" ||
+    lowerName === "minecraftinstance.json" ||
+    lowerName === "launcher_profiles.json" ||
+    lowerName === "launcher_settings.json" ||
+    lowerName === "version_manifest_v2.json" ||
+    lowerName === "jre_manifest.json"
+  ) {
+    return false;
+  }
+
+  if (lowerPath.includes("essential") && lowerName.startsWith("connection-")) {
+    return false;
+  }
+
+    return (
+    lowerName === "latest.log" ||
+    lowerName === "debug.log" ||
+    lowerName === "logoutput.log" ||
+    lowerName.startsWith("crash-") ||
+    lowerName.startsWith("hs_err") ||
+    lowerName.startsWith("launcher_log") ||
+    (lowerPath.includes("crash-reports") && lowerName.endsWith(".txt")) ||
+    (lowerPath.includes("logs") && lowerName.endsWith(".log"))
+  );
+}
+
+  return (
+    lowerName.endsWith(".log") ||
+    lowerName.endsWith(".txt") ||
+    lowerName.endsWith(".json") ||
+    lowerName.startsWith("hs_err") ||
+    lowerName.includes("crash") ||
+    lowerName.includes("error") ||
+    lowerName === "logoutput.log" ||
+    lowerName === "latest.log"
+  );
+}
+
 function scoreLogFile(fileName, fullPath, stats) {
   let score = 0;
   const lower = fileName.toLowerCase();
 
-  if (lower === "latest.log") score += 100;
-  if (lower.includes("crash")) score += 80;
-  if (lower.endsWith(".log")) score += 40;
-  if (lower.endsWith(".txt")) score += 20;
-  if (lower.startsWith("hs_err")) score += 60;
-  if (lower.includes("debug")) score += 10;
-  if (lower === "logoutput.log") score += 90;
+if (lower === "latest.log") score += 200;
+if (lower === "debug.log") score += 140;
+if (lower.startsWith("crash-") && lower.endsWith(".txt")) score += 220;
+if (fullPath.toLowerCase().includes("crash-reports")) score += 120;
+if (lower.startsWith("launcher_log")) score += 40;
+
+if (fullPath.toLowerCase().includes("telemetry")) score -= 300;
+if (fullPath.toLowerCase().includes("essential")) score -= 120;
+if (lower.endsWith(".json")) score -= 200;
+if (lower.startsWith("crash-") && lower.endsWith(".txt")) score += 120;
+if (fullPath.toLowerCase().includes("crash-reports")) score += 50;
+if (lower === "latest.log") score += 100;
+if (lower.includes("crash")) score += 80;
+if (lower.endsWith(".log")) score += 40;
+if (lower.endsWith(".txt")) score += 20;
+if (lower.startsWith("hs_err")) score += 60;
+if (lower.includes("debug")) score += 10;
+if (lower === "logoutput.log") score += 90;
 if (lower === "latest.log") score += 100;
 if (lower.includes("error")) score += 50;
 if (lower.includes("bepinex")) score += 40;
@@ -232,9 +293,9 @@ if (lower.includes("melonloader")) score += 40;
 if (lower.includes("skse")) score += 35;
 if (lower.includes("f4se")) score += 35;
 
-  if (fullPath.toLowerCase().includes("crash-reports")) score += 30;
-  if (fullPath.toLowerCase().includes("logs")) score += 20;
-  if (fullPath.toLowerCase().includes("errorlogs")) score += 25;
+if (fullPath.toLowerCase().includes("crash-reports")) score += 30;
+if (fullPath.toLowerCase().includes("logs")) score += 20;
+if (fullPath.toLowerCase().includes("errorlogs")) score += 25;
 if (fullPath.toLowerCase().includes("bepinex")) score += 25;
 if (fullPath.toLowerCase().includes("melonloader")) score += 25;
 if (fullPath.toLowerCase().includes("skse")) score += 20;
@@ -247,27 +308,16 @@ if (fullPath.toLowerCase().includes("f4se")) score += 20;
   return score;
 }
 
-function collectLogsFromDirectory(dir) {
+function collectLogsFromDirectory(dir, gameKey = null) {
   const foundLogs = [];
   const entries = safeReadDir(dir);
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
 
-    const lower = entry.name.toLowerCase();
-    const isUseful =
-  lower.endsWith(".log") ||
-  lower.endsWith(".txt") ||
-  lower.endsWith(".json") ||
-  lower.startsWith("hs_err") ||
-  lower.includes("crash") ||
-  lower.includes("error") ||
-  lower === "logoutput.log" ||
-  lower === "latest.log";
-
-    if (!isUseful) continue;
-
     const fullPath = path.join(dir, entry.name);
+
+    if (!isUsefulLogForGame(gameKey, entry.name, fullPath)) continue;
 
     let stats;
     try {
@@ -308,17 +358,17 @@ function scanLogsForGame(gameKey) {
   for (const root of allRootsToCheck) {
     const logDirs = getLogDirectoriesForRoot(root);
 
-    for (const dir of logDirs) {
-      const logs = collectLogsFromDirectory(dir);
+        for (const dir of logDirs) {
+      const logs = collectLogsFromDirectory(dir, gameKey);
       allLogs.push(...logs);
     }
 
-    const directLogs = collectLogsFromDirectory(root);
+    const directLogs = collectLogsFromDirectory(root, gameKey);
     allLogs.push(...directLogs);
   }
 
-  const deduped = Array.from(
-    new Map(allLogs.map((log) => [log.fullPath, log])).values()
+    const deduped = Array.from(
+    new Map(allLogs.map((log) => [log.fullPath.toLowerCase(), log])).values()
   );
 
   deduped.sort((a, b) => {
@@ -329,7 +379,7 @@ function scanLogsForGame(gameKey) {
   return deduped.map(({ score, ...rest }) => rest);
 }
 
-function scanFolderRecursive(folderPath, depth = 0, maxDepth = 5) {
+function scanFolderRecursive(folderPath, gameKey = "minecraft", depth = 0, maxDepth = 5) {
   if (!folderPath || !exists(folderPath) || depth > maxDepth) return [];
 
   const entries = safeReadDir(folderPath);
@@ -339,24 +389,14 @@ function scanFolderRecursive(folderPath, depth = 0, maxDepth = 5) {
     const fullPath = path.join(folderPath, entry.name);
 
     if (entry.isDirectory()) {
-      results.push(...scanFolderRecursive(fullPath, depth + 1, maxDepth));
+      results.push(...scanFolderRecursive(fullPath, gameKey, depth + 1, maxDepth));
       continue;
     }
 
     if (!entry.isFile()) continue;
 
     const lower = entry.name.toLowerCase();
-    const isUseful =
-      lower.endsWith(".log") ||
-      lower.endsWith(".txt") ||
-      lower.endsWith(".json") ||
-      lower.startsWith("hs_err") ||
-      lower.includes("crash") ||
-      lower.includes("error") ||
-      lower === "logoutput.log" ||
-      lower === "latest.log";
-
-    if (!isUseful) continue;
+    if (!isUsefulLogForGame(gameKey, entry.name, fullPath)) continue;
 
     let stats;
     try {

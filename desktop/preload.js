@@ -4,8 +4,9 @@ contextBridge.exposeInMainWorld("fixMyGame", {
   ping: () => "Electron is working",
   scanLogsForGame: (gameKey) => ipcRenderer.invoke("scan-logs-for-game", gameKey),
   pickLogFile: () => ipcRenderer.invoke("pick-log-file"),
-  pickScanFolder: () => ipcRenderer.invoke("pick-scan-folder"),
-  scanCustomFolder: (folderPath) => ipcRenderer.invoke("scan-custom-folder", folderPath),
+  pickScanFolder: (defaultPath) => ipcRenderer.invoke("pick-scan-folder", defaultPath),
+  scanCustomFolder: (folderPath, gameKey) =>
+  ipcRenderer.invoke("scan-custom-folder", folderPath, gameKey),
   readLogFile: (filePath) => ipcRenderer.invoke("read-log-file", filePath),
   saveAnalysis: (defaultPath, content) =>
     ipcRenderer.invoke("file:saveText", { defaultPath, content }),

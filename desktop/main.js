@@ -37,6 +37,94 @@ function exists(p) {
   }
 }
 
+function safeReadDir(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function collectInstanceFolders(baseDir) {
+  if (!exists(baseDir)) return [];
+
+  const entries = safeReadDir(baseDir);
+  const instanceDirs = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    instanceDirs.push(path.join(baseDir, entry.name));
+  }
+
+  return instanceDirs;
+}
+
+function scoreMinecraftInstall(candidatePath) {
+  let score = 0;
+  const lower = candidatePath.toLowerCase();
+
+  if (exists(path.join(candidatePath, "mods"))) score += 5;
+  if (exists(path.join(candidatePath, "logs"))) score += 4;
+  if (exists(path.join(candidatePath, "crash-reports"))) score += 4;
+  if (exists(path.join(candidatePath, ".minecraft", "mods"))) score += 3;
+  if (exists(path.join(candidatePath, ".minecraft", "logs"))) score += 3;
+  if (exists(path.join(candidatePath, ".minecraft", "crash-reports"))) score += 3;
+
+  if (lower.includes("curseforge")) score += 8;
+  if (lower.includes("instances")) score += 6;
+  if (lower.endsWith(".minecraft")) score += 2;
+
+  return score;
+}
+
+function getMinecraftInstallCandidates() {
+  const home = os.homedir();
+  const appData = process.env.APPDATA || "";
+
+  const roots = [];
+
+  if (process.platform === "win32") {
+    roots.push(
+      path.join(appData, ".minecraft"),
+      path.join(home, "curseforge", "minecraft", "Instances"),
+      path.join(home, "AppData", "Roaming", "curseforge", "minecraft", "Instances"),
+      path.join(home, "AppData", "Roaming", "CurseForge", "Minecraft", "Instances"),
+      path.join(home, "AppData", "Local", "ModrinthApp", "profiles"),
+      path.join(appData, "PrismLauncher", "instances"),
+      path.join(appData, "MultiMC", "instances")
+    );
+  }
+
+  const candidates = [];
+
+  for (const root of roots) {
+    if (!exists(root)) continue;
+
+    candidates.push(root);
+
+    for (const instance of collectInstanceFolders(root)) {
+      candidates.push(instance);
+    }
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function getBestMinecraftInstallPath() {
+  const candidates = getMinecraftInstallCandidates();
+
+  if (!candidates.length) return null;
+
+  const scored = candidates
+    .map((candidate) => ({
+      candidate,
+      score: scoreMinecraftInstall(candidate),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.candidate || null;
+}
+
 function getCandidateDriveRoots() {
   if (process.platform !== "win32") return [];
 
@@ -82,59 +170,37 @@ function getModsFolderForGame(gameKey) {
   const candidates = [];
 
   switch (gameKey) {
-    case "minecraft":
+    case "minecraft": {
+  const bestMinecraft = getBestMinecraftInstallPath();
+
+  if (bestMinecraft) {
+    candidates.push(
+      path.join(bestMinecraft, "mods"),
+      path.join(bestMinecraft, ".minecraft", "mods"),
+      path.join(bestMinecraft, "minecraft", "mods")
+    );
+  }
+
   if (process.platform === "win32") {
     candidates.push(
-      path.join(appData, ".minecraft", "mods"),
-      path.join(home, "AppData", "Roaming", "CurseForge", "Minecraft", "Instances"),
-      path.join(home, "AppData", "Roaming", "curseforge", "minecraft", "Instances"),
-      path.join(home, "AppData", "Local", "ModrinthApp", "profiles"),
-      path.join(appData, "PrismLauncher", "instances"),
-      path.join(appData, "MultiMC", "instances")
+      path.join(appData, ".minecraft", "mods")
     );
-
-    const instanceRoots = [
-      path.join(home, "AppData", "Roaming", "CurseForge", "Minecraft", "Instances"),
-      path.join(home, "AppData", "Roaming", "curseforge", "minecraft", "Instances"),
-      path.join(home, "AppData", "Local", "ModrinthApp", "profiles"),
-      path.join(appData, "PrismLauncher", "instances"),
-      path.join(appData, "MultiMC", "instances")
-    ];
-
-    for (const root of instanceRoots) {
-      if (!exists(root)) continue;
-
-      try {
-        const entries = fs.readdirSync(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-
-          candidates.push(
-            path.join(root, entry.name, "mods"),
-            path.join(root, entry.name, ".minecraft", "mods"),
-            path.join(root, entry.name, "minecraft", "mods")
-          );
-        }
-      } catch {}
-    }
   }
 
   if (process.platform === "darwin") {
     candidates.push(
-      path.join(home, "Library", "Application Support", "minecraft", "mods"),
-      path.join(home, "Library", "Application Support", "PrismLauncher", "instances"),
-      path.join(home, "Library", "Application Support", "MultiMC", "instances")
+      path.join(home, "Library", "Application Support", "minecraft", "mods")
     );
   }
 
   if (process.platform === "linux") {
     candidates.push(
-      path.join(home, ".minecraft", "mods"),
-      path.join(home, ".local", "share", "PrismLauncher", "instances"),
-      path.join(home, ".local", "share", "MultiMC", "instances")
+      path.join(home, ".minecraft", "mods")
     );
   }
+
   break;
+}
 
     case "sims4":
       candidates.push(path.join(documents, "Electronic Arts", "The Sims 4", "Mods"));
@@ -199,45 +265,25 @@ function getLogsFolderForGame(gameKey) {
   const candidates = [];
 
   switch (gameKey) {
-    case "minecraft":
+    case "minecraft": {
+  const bestMinecraft = getBestMinecraftInstallPath();
+
+  if (bestMinecraft) {
+    candidates.push(
+      path.join(bestMinecraft, "logs"),
+      path.join(bestMinecraft, "crash-reports"),
+      path.join(bestMinecraft, ".minecraft", "logs"),
+      path.join(bestMinecraft, ".minecraft", "crash-reports"),
+      path.join(bestMinecraft, "minecraft", "logs"),
+      path.join(bestMinecraft, "minecraft", "crash-reports")
+    );
+  }
+
   if (process.platform === "win32") {
     candidates.push(
       path.join(appData, ".minecraft", "logs"),
-      path.join(appData, ".minecraft", "crash-reports"),
-      path.join(home, "AppData", "Roaming", "CurseForge", "Minecraft", "Instances"),
-      path.join(home, "AppData", "Roaming", "curseforge", "minecraft", "Instances"),
-      path.join(home, "AppData", "Local", "ModrinthApp", "profiles"),
-      path.join(appData, "PrismLauncher", "instances"),
-      path.join(appData, "MultiMC", "instances")
+      path.join(appData, ".minecraft", "crash-reports")
     );
-
-    const instanceRoots = [
-      path.join(home, "AppData", "Roaming", "CurseForge", "Minecraft", "Instances"),
-      path.join(home, "AppData", "Roaming", "curseforge", "minecraft", "Instances"),
-      path.join(home, "AppData", "Local", "ModrinthApp", "profiles"),
-      path.join(appData, "PrismLauncher", "instances"),
-      path.join(appData, "MultiMC", "instances")
-    ];
-
-    for (const root of instanceRoots) {
-      if (!exists(root)) continue;
-
-      try {
-        const entries = fs.readdirSync(root, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue;
-
-          candidates.push(
-            path.join(root, entry.name, "logs"),
-            path.join(root, entry.name, "crash-reports"),
-            path.join(root, entry.name, ".minecraft", "logs"),
-            path.join(root, entry.name, ".minecraft", "crash-reports"),
-            path.join(root, entry.name, "minecraft", "logs"),
-            path.join(root, entry.name, "minecraft", "crash-reports")
-          );
-        }
-      } catch {}
-    }
   }
 
   if (process.platform === "darwin") {
@@ -253,7 +299,9 @@ function getLogsFolderForGame(gameKey) {
       path.join(home, ".minecraft", "crash-reports")
     );
   }
+
   break;
+}
 
     case "sims4":
       candidates.push(path.join(documents, "Electronic Arts", "The Sims 4"));
@@ -434,11 +482,7 @@ function getCandidateInstallPaths(gameKey) {
   const home = os.homedir();
 
   const candidates = {
-    minecraft: [
-      path.join(home, "AppData", "Roaming", ".minecraft"),
-      path.join(home, "curseforge", "minecraft", "Instances"),
-      path.join(home, "AppData", "Roaming", "PrismLauncher", "instances"),
-    ],
+    minecraft: getMinecraftInstallCandidates(),
     sims4: [
       path.join(home, "Documents", "Electronic Arts", "The Sims 4"),
     ],
@@ -468,6 +512,24 @@ function getCandidateInstallPaths(gameKey) {
 
 ipcMain.handle("detect-game-install", async (_event, gameKey) => {
   try {
+    if (gameKey === "minecraft") {
+      const bestMinecraft = getBestMinecraftInstallPath();
+
+      if (bestMinecraft && exists(bestMinecraft)) {
+        return {
+          ok: true,
+          detected: true,
+          path: bestMinecraft,
+        };
+      }
+
+      return {
+        ok: true,
+        detected: false,
+        path: null,
+      };
+    }
+
     const candidates = getCandidateInstallPaths(gameKey);
 
     for (const candidate of candidates) {
@@ -539,9 +601,10 @@ ipcMain.handle("pick-log-file", async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle("pick-scan-folder", async () => {
+ipcMain.handle("pick-scan-folder", async (_event, defaultPath) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Choose a folder to scan",
+    defaultPath: defaultPath && exists(defaultPath) ? defaultPath : undefined,
     properties: ["openDirectory"],
   });
 
@@ -560,8 +623,8 @@ ipcMain.handle("scan-logs-for-game", async (_event, gameKey) => {
   return scanLogsForGame(gameKey);
 });
 
-ipcMain.handle("scan-custom-folder", async (_event, folderPath) => {
-  return scanFolderRecursive(folderPath);
+ipcMain.handle("scan-custom-folder", async (_event, folderPath, gameKey) => {
+  return scanFolderRecursive(folderPath, gameKey);
 });
 
 ipcMain.handle("open-mods-folder", async (_event, gameKey) => {

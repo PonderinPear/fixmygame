@@ -117,6 +117,39 @@ function fallbackAnalyze(crashLog: string, gameKey = "", gameTitle = "Unknown Ga
   
   const suspectedMods: string[] = [];
 
+  if (typeof crashLog === "string" && crashLog.toLowerCase().includes("mezz/jei")) {
+  if (!suspectedMods.includes("jei")) {
+    suspectedMods.unshift("jei"); // force it to be FIRST
+  }
+}
+
+  const suspiciousNamespaces: Array<{ needle: string; mod: string }> = [
+  { needle: "mezz/jei", mod: "jei" },
+  { needle: "jei/", mod: "jei" },
+  { needle: "fabric-api", mod: "fabric-api" },
+  { needle: "fabric_api", mod: "fabric-api" },
+  { needle: "sodium", mod: "sodium" },
+  { needle: "iris", mod: "iris" },
+  { needle: "oculus", mod: "oculus" },
+  { needle: "optifine", mod: "optifine" },
+  { needle: "rubidium", mod: "rubidium" },
+  { needle: "embeddium", mod: "embeddium" },
+  { needle: "skse", mod: "skse" },
+  { needle: "address library", mod: "address library" },
+  { needle: "f4se", mod: "f4se" },
+  { needle: "buffout", mod: "buffout" },
+  { needle: "mccc", mod: "mccc" },
+  { needle: "wickedwhims", mod: "wickedwhims" },
+  { needle: "basemental", mod: "basemental" },
+  { needle: "xml injector", mod: "xml injector" },
+];
+
+for (const entry of suspiciousNamespaces) {
+  if (lower.includes(entry.needle) && !suspectedMods.includes(entry.mod)) {
+    suspectedMods.push(entry.mod);
+  }
+}
+
 if (normalizedGameKey === "minecraft") {
   const modRegex =
     /mod file:\s*([^\s]+)|failure message:\s*([a-z0-9_\-]+)|([a-z0-9_\-]+):\s+[a-z0-9 ._\-]+/gi;
@@ -366,23 +399,26 @@ if (normalizedGameKey === "fallout4") {
       "Close other memory-heavy apps before launching.",
     ];
   } else if (likelyCategory === "mixin_failure") {
-    quickFixFirst = "Remove or update the mod causing the mixin failure.";
-    issue = "A mixin failed to apply during startup or runtime.";
-    mostLikelyCause = "An incompatible mod, wrong mod version, or loader mismatch caused the mixin system to fail.";
-    probabilityBreakdown = [
-      "Incompatible mod version: 60%",
-      "Loader/version mismatch: 25%",
-      "Conflict with another core mod: 15%",
-    ];
-    recommendedFixSteps = [
-      "Update the mod mentioned near the mixin error.",
-      "Confirm the mod matches your Minecraft and loader version.",
-      "Temporarily remove optimization/core mods and test again.",
-      "Review the full stack trace for the first mod named near the mixin error.",
-    ];
-  } else if (likelyCategory === "missing_dependency") {
-    quickFixFirst = "Install the missing dependency or remove the dependent mod.";
-    issue = "A required dependency is missing.";
+  const leadMod = suspectedMods[0] || "the mod named near the mixin error";
+
+  quickFixFirst = `Update or remove ${leadMod} first, then retest launch.`;
+  issue = "A mixin failed to apply during startup or runtime.";
+  mostLikelyCause = `${leadMod} appears tied to a missing class, incompatible target, wrong mod version, or loader mismatch.`;
+  probabilityBreakdown = [
+    `Incompatible mod version (${leadMod}): 60%`,
+    "Loader/version mismatch: 25%",
+    "Conflict with another core mod: 15%",
+  ];
+  recommendedFixSteps = [
+    `Update ${leadMod} to a version that matches your Minecraft and loader version.`,
+    `Temporarily remove ${leadMod} and retest launch.`,
+    "Confirm all mods match your exact Minecraft and loader version.",
+    "Review the first stack trace lines around the mixin/class error for related dependencies.",
+  ];
+} else if (likelyCategory === "missing_dependency") {
+  const leadMod = suspectedMods[0] || "the affected mod";
+  quickFixFirst = `Install the missing dependency for ${leadMod}, or remove ${leadMod}.`;
+  issue = `A required dependency is missing for ${leadMod}.`;
     mostLikelyCause = "One or more mods require another mod or library that is not installed or is the wrong version.";
     probabilityBreakdown = [
       "Missing dependency: 80%",
@@ -548,6 +584,91 @@ Focus on:
   }
 }
 
+function applyForcedSuspiciousMod(
+  normalized: AnalyzeModelResponse,
+  forcedSuspiciousMod: string,
+  mostSuspiciousLine?: string
+): AnalyzeModelResponse {
+  if (!forcedSuspiciousMod) return normalized;
+
+  const currentMods = Array.isArray(normalized.detectedSignals?.suspectedMods)
+    ? normalized.detectedSignals.suspectedMods.filter(Boolean)
+    : [];
+
+  const reorderedMods = [
+    forcedSuspiciousMod,
+    ...currentMods.filter(
+      (mod) => mod.toLowerCase() !== forcedSuspiciousMod.toLowerCase()
+    ),
+  ];
+
+  const suspiciousLineLower = (mostSuspiciousLine || "").toLowerCase();
+
+  let likelyCategory = normalized.detectedSignals?.likelyCategory || "unknown";
+  let quickFixFirst = normalized.quickFixFirst;
+  let issue = normalized.issue;
+  let mostLikelyCause = normalized.mostLikelyCause;
+  let probabilityBreakdown = normalized.probabilityBreakdown;
+  let recommendedFixSteps = normalized.recommendedFixSteps;
+  let needMoreInfo = normalized.needMoreInfo;
+  let errorType = normalized.detectedSignals?.errorType || "";
+
+  if (
+    suspiciousLineLower.includes("classnotfoundexception") ||
+    suspiciousLineLower.includes("nosuchmethoderror") ||
+    suspiciousLineLower.includes("missing")
+  ) {
+    likelyCategory = "missing_dependency";
+    errorType = errorType || "ClassNotFoundException";
+    quickFixFirst = `Update or reinstall ${forcedSuspiciousMod} and its required dependencies.`;
+    issue = `${forcedSuspiciousMod} is referencing a class or dependency that is not present.`;
+    mostLikelyCause = `${forcedSuspiciousMod} is the primary failing mod, likely due to a missing dependency, wrong version, or incompatible build.`;
+    probabilityBreakdown = [
+      `70% - Missing dependency or wrong version for ${forcedSuspiciousMod}`,
+      "20% - Loader / Minecraft version mismatch",
+      "10% - Secondary mod conflict",
+    ];
+    recommendedFixSteps = [
+      `Update ${forcedSuspiciousMod} to the correct version for your Minecraft and loader version.`,
+      `Install any dependency ${forcedSuspiciousMod} requires, such as JEI API/library components if applicable.`,
+      `Temporarily remove ${forcedSuspiciousMod} and relaunch to confirm it is the trigger.`,
+    ];
+    needMoreInfo =
+      "If the issue continues, provide the exact mod version and the full stack trace around the suspicious line.";
+  } else {
+    likelyCategory = "mixin_failure";
+    quickFixFirst = `Update or remove ${forcedSuspiciousMod} first, then retest launch.`;
+    issue = `${forcedSuspiciousMod} appears to be the primary mod tied to the suspicious line.`;
+    mostLikelyCause = `${forcedSuspiciousMod} is likely incompatible with the current game, loader, or another installed mod.`;
+    probabilityBreakdown = [
+      `65% - ${forcedSuspiciousMod} version mismatch or broken patch`,
+      "25% - Loader / game mismatch",
+      "10% - Secondary mod conflict",
+    ];
+    recommendedFixSteps = [
+      `Update ${forcedSuspiciousMod} to the newest compatible version.`,
+      `Temporarily remove ${forcedSuspiciousMod} and relaunch.`,
+      "Verify all mods match the exact Minecraft and loader version.",
+    ];
+  }
+
+  return {
+    ...normalized,
+    quickFixFirst,
+    issue,
+    mostLikelyCause,
+    probabilityBreakdown,
+    recommendedFixSteps,
+    needMoreInfo,
+    detectedSignals: {
+      ...normalized.detectedSignals,
+      errorType,
+      likelyCategory,
+      suspectedMods: reorderedMods,
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const redisPro = await isProUser(req);
@@ -573,6 +694,7 @@ export async function POST(req: NextRequest) {
       gpuModel,
       driverVersion,
       graphicsApiMode,
+      mostSuspiciousLine, 
     } = body ?? {};
 
     if (!crashLog || typeof crashLog !== "string" || !crashLog.trim()) {
@@ -583,8 +705,26 @@ export async function POST(req: NextRequest) {
 );
     }
 
-    const safeGameKey = typeof gameKey === "string" ? gameKey : "";
+const safeGameKey = typeof gameKey === "string" ? gameKey : "";
 const safeGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
+
+let forcedSuspiciousMod = "";
+
+if (typeof mostSuspiciousLine === "string") {
+  const line = mostSuspiciousLine.toLowerCase();
+
+  if (line.includes("mezz/jei") || line.includes("jei/")) {
+    forcedSuspiciousMod = "jei";
+  } else if (line.includes("fabric-api") || line.includes("fabric_api")) {
+    forcedSuspiciousMod = "fabric-api";
+  } else if (line.includes("sodium")) {
+    forcedSuspiciousMod = "sodium";
+  } else if (line.includes("iris")) {
+    forcedSuspiciousMod = "iris";
+  } else if (line.includes("optifine")) {
+    forcedSuspiciousMod = "optifine";
+  }
+}
 
 const gameSpecificPrompt = getGameSpecificPrompt(safeGameKey, safeGameTitle);
 
@@ -628,6 +768,19 @@ Game Key: ${safeGameKey}
 GPU: ${gpuModel ?? ""}
 Driver Version: ${driverVersion ?? ""}
 Graphics API Mode: ${graphicsApiMode ?? ""}
+Most Suspicious Line: ${typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""}
+Forced Suspicious Mod: ${forcedSuspiciousMod}
+
+Priority Rules:
+- The "Most Suspicious Line" must heavily influence your diagnosis.
+- If "Forced Suspicious Mod" is provided, treat it as the PRIMARY failing mod.
+- Do NOT override the forced mod with other mods unless clearly proven otherwise.
+- If the forced mod references missing classes, treat it as missing dependency or version mismatch.
+- If a class path, package path, mod id, jar name, or namespace appears in the suspicious line, identify the most likely mod tied to it.
+- Prefer naming the exact mod over giving only a generic "mod conflict" answer.
+- If the suspicious line clearly points to a missing class, missing dependency, or incompatible mod, say that directly.
+- Do not ignore the suspicious line just because the full log is long.
+- If JEI, Fabric API, Forge, Quilt, SKSE, F4SE, MCCC, WickedWhims, Basemental, XML Injector, Address Library, Buffout, or similar major frameworks are referenced, call them out by name when relevant.
 
 Crash Log:
 ${crashLog}
@@ -683,13 +836,18 @@ ${crashLog}
   likelyCategory: parsed.detectedSignals?.likelyCategory || "unknown",
 },
     };
+    const finalNormalized = applyForcedSuspiciousMod(
+  normalized,
+  forcedSuspiciousMod,
+  typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""
+);
 
-    const result = formatPlainText(normalized);
+    const result = formatPlainText(finalNormalized);
 
 const res = jsonResponse({
   result,
-  analysis: normalized,
-  detectedSignals: normalized.detectedSignals,
+  analysis: finalNormalized,
+  detectedSignals: finalNormalized.detectedSignals,
   isPro,
   remaining: isPro ? Infinity : Math.max(0, DAILY_LIMIT - count),
 });

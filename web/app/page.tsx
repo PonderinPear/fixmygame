@@ -10,8 +10,11 @@ declare global {
   | Promise<{ name: string; fullPath: string; lastModified?: number; size?: number }[]>
   | { name: string; fullPath: string; lastModified?: number; size?: number }[];
       pickLogFile?: () => Promise<string | null>;
-      pickScanFolder?: () => Promise<string | null>;
-      scanCustomFolder?: (folderPath: string) => Promise<
+      pickScanFolder?: (defaultPath?: string) => Promise<string | null>;
+      scanCustomFolder?: (
+  folderPath: string,
+  gameKey?: string
+) => Promise<
   { name: string; fullPath: string; lastModified?: number; size?: number }[]
 >;
       readLogFile?: (filePath: string) => Promise<string>;
@@ -1374,6 +1377,7 @@ export default function Page() {
   const [showFixGuide, setShowFixGuide] = useState(false);
   const [showFixPreviewModal, setShowFixPreviewModal] = useState(false);
   const [showFixHistoryModal, setShowFixHistoryModal] = useState(false);
+  const [actionMsgLocation, setActionMsgLocation] = useState<"fixAssistant" | "smartFix" | "diagnostic" | null>(null);
   const [showProModal, setShowProModal] = useState(false);
   const [desktopConnected, setDesktopConnected] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
@@ -1412,6 +1416,19 @@ const gameTitle = selectedGame.label;
   () => getProModalContent(proModalContext, gameTitle),
   [proModalContext, gameTitle]
 );
+
+function showActionMessage(
+  message: string,
+  location: "fixAssistant" | "smartFix" | "diagnostic"
+) {
+  setActionMsg(message);
+  setActionMsgLocation(location);
+
+  setTimeout(() => {
+    setActionMsg("");
+    setActionMsgLocation(null);
+  }, 4000);
+}
 
 async function copyTextReliable(text: string) {
   const safeText = String(text ?? "");
@@ -1556,6 +1573,11 @@ useEffect(() => {
   detectSelectedGameInstall(selectedGameKey);
 }, [selectedGameKey]);
 
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  setFixHistoryItems(loadFixHistory());
+}, [showFixHistoryModal, isPro]);
+
   function showCrashLogHelp() {
   const helpText: Record<string, string> = {
     minecraft: `Minecraft (CurseForge / Forge / Fabric / Prism / Modrinth):
@@ -1652,10 +1674,10 @@ const activeGameKey = detectedGame || selectedGameKey;
 
 if (detectedGame && detectedGame !== selectedGameKey) {
   setSelectedGameKey(detectedGame);
-  setActionMsg(`Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`);
-  setTimeout(() => {
-    setActionMsg("");
-  }, 1800);
+  showActionMessage(
+  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+  "fixAssistant"
+);
 }
 
 setCrashLog(contents);
@@ -1680,10 +1702,15 @@ async function pickCustomScanFolder() {
   }
 
   try {
-    const folderPath = await window.fixMyGame.pickScanFolder();
+    const defaultScanPath =
+  gameInstallPath ||
+  currentLogPath ||
+  "";
+
+const folderPath = await window.fixMyGame.pickScanFolder(defaultScanPath);
     if (!folderPath) return;
 
-    const logs = await window.fixMyGame.scanCustomFolder(folderPath);
+    const logs = await window.fixMyGame.scanCustomFolder(folderPath, selectedGameKey);
     const normalizedLogs = Array.isArray(logs) ? logs : [];
 
     setDetectedLogs(normalizedLogs);
@@ -1708,10 +1735,10 @@ const activeGameKey = detectedGame || selectedGameKey;
 
 if (detectedGame && detectedGame !== selectedGameKey) {
   setSelectedGameKey(detectedGame);
-  setActionMsg(`Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`);
-  setTimeout(() => {
-    setActionMsg("");
-  }, 1800);
+  showActionMessage(
+  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+  "fixAssistant"
+);
 }
 
 setCrashLog(contents);
@@ -1719,6 +1746,8 @@ setQuickSignals(quickDetect(contents, activeGameKey));
 setLogHighlights(extractLogHighlights(contents, activeGameKey));
 setLiveMods(extractModsFromLog(contents, activeGameKey));
 setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
+
+await runDiagnostic(contents);
   } catch {
     setErrorMsg("Failed to scan the selected folder.");
   }
@@ -1746,11 +1775,10 @@ if (normalizedLogs.length === 0) {
   return;
 }
 
-setActionMsg(`Found ${normalizedLogs.length} potential ${gameTitle} log file${normalizedLogs.length === 1 ? "" : "s"}.`);
-
-setTimeout(() => {
-  setActionMsg("");
-}, 2500);
+showActionMessage(
+  `Found ${normalizedLogs.length} potential ${gameTitle} log file${normalizedLogs.length === 1 ? "" : "s"}.`,
+  "fixAssistant"
+);
 
 // AUTO-SELECT BEST LOG
 if (normalizedLogs.length > 0) {
@@ -1768,10 +1796,10 @@ const activeGameKey = detectedGame || selectedGameKey;
 
 if (detectedGame && detectedGame !== selectedGameKey) {
   setSelectedGameKey(detectedGame);
-  setActionMsg(`Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`);
-  setTimeout(() => {
-    setActionMsg("");
-  }, 1800);
+  showActionMessage(
+  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+  "fixAssistant"
+);
 }
 
 setCrashLog(contents);
@@ -1780,10 +1808,7 @@ setLogHighlights(extractLogHighlights(contents, activeGameKey));
 setLiveMods(extractModsFromLog(contents, activeGameKey));
 setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
 
-  // AUTO RUN DIAGNOSTIC
-  setTimeout(() => {
-    runDiagnostic();
-  }, 200);
+await runDiagnostic(contents);
 }
 
   } catch {
@@ -1811,10 +1836,10 @@ const activeGameKey = detectedGame || selectedGameKey;
 
 if (detectedGame && detectedGame !== selectedGameKey) {
   setSelectedGameKey(detectedGame);
-  setActionMsg(`Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`);
-  setTimeout(() => {
-    setActionMsg("");
-  }, 1800);
+  showActionMessage(
+  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+  "fixAssistant"
+);
 }
 
 setCrashLog(contents);
@@ -1867,11 +1892,10 @@ async function openModsFolder(silent = false) {
     }
 
     if (!silent) {
-      setActionMsg(`Opened ${gameTitle} mods folder: ${response.path}`);
-
-      setTimeout(() => {
-        setActionMsg("");
-      }, 2500);
+      showActionMessage(
+  `Opened ${gameTitle} mods folder: ${response.path}`,
+  "fixAssistant"
+);
     }
 
     return true;
@@ -1925,11 +1949,7 @@ async function openLogsFolder(silent = false) {
     }
 
     if (!silent) {
-      setActionMsg(`Opened ${gameTitle} logs folder: ${response.path}`);
-
-      setTimeout(() => {
-        setActionMsg("");
-      }, 2500);
+      showActionMessage(`Opened ${gameTitle} logs folder: ${response.path}`, "fixAssistant");
     }
 
     return true;
@@ -1946,17 +1966,19 @@ async function openLogsFolder(silent = false) {
   }
 }
 
-  async function runDiagnostic() {
+  async function runDiagnostic(overrideCrashLog?: string) {
     setErrorMsg("");
     setResult("");
 
     setDetectedSignals(null);
     setAnalysis(null);
     
-    if (!crashLog.trim()) {
-      setErrorMsg("Paste a crash log / error first.");
-      return;
-    }
+    const logToUse = overrideCrashLog ?? crashLog;
+
+if (!logToUse.trim()) {
+  setErrorMsg("Paste a crash log / error first.");
+  return;
+}
 
     if (!canRun) {
       setErrorMsg("Daily limit reached. Upgrade to Pro for unlimited diagnostics.");
@@ -1971,7 +1993,8 @@ async function openLogsFolder(silent = false) {
         gpuModel,
         driverVersion,
         graphicsApiMode,
-        crashLog,
+        crashLog: logToUse,
+        mostSuspiciousLine,
       };
 
       const data = await fetchJSON<AnalyzeResponse>(`${API_BASE_URL}/api/analyze`, {
@@ -2053,7 +2076,7 @@ async function saveResult() {
 
 setTimeout(() => {
   setSaved(false);
-}, 1500);
+}, 2500);
   } catch {
     setErrorMsg("Failed to save analysis.");
   }
@@ -2083,19 +2106,16 @@ async function copyResult() {
   try {
     await copyTextReliable(textToCopy);
     setCopied(true);
-    setActionMsg("Copied to system clipboard and saved to Fix History.");
-
-    setTimeout(() => {
-      setCopied(false);
-      setActionMsg("");
-    }, 1800);
+    showActionMessage("Copied to system clipboard and saved to Fix History.", "diagnostic");
+setTimeout(() => {
+  setCopied(false);
+}, 4000);
   } catch (error: unknown) {
     setCopied(false);
-    setActionMsg("Saved to Fix History. System clipboard copy failed on this device.");
-
-    setTimeout(() => {
-      setActionMsg("");
-    }, 2500);
+    showActionMessage(
+  "Saved to Fix History. System clipboard copy failed on this device.",
+  "diagnostic"
+);
 
     setErrorMsg(
       error instanceof Error ? error.message : "Failed to copy result."
@@ -2121,18 +2141,10 @@ async function applyQuickFix() {
   try {
     await copyTextReliable(quickFixText);
     setShowFixPreviewModal(false);
-    setActionMsg("Quick fix copied to clipboard and saved to Fix History.");
-
-    setTimeout(() => {
-      setActionMsg("");
-    }, 2000);
+    showActionMessage("Quick fix copied to clipboard and saved to Fix History.", "fixAssistant");
   } catch (error: unknown) {
     setShowFixPreviewModal(false);
-    setActionMsg("Quick fix saved to Fix History. System clipboard copy failed on this device.");
-
-    setTimeout(() => {
-      setActionMsg("");
-    }, 2500);
+    showActionMessage("Quick fix saved to Fix History. System clipboard copy failed on this device.", "fixAssistant");
 
     setErrorMsg(
       error instanceof Error ? error.message : "Failed to copy quick fix."
@@ -2229,11 +2241,7 @@ async function runFixPlan() {
   const successCount = results.filter((r) => r.ok).length;
   const totalCount = results.length;
 
-  setActionMsg(`Fix plan finished: ${successCount}/${totalCount} safe actions completed.`);
-
-  setTimeout(() => {
-    setActionMsg("");
-  }, 3500);
+  showActionMessage(`Fix plan finished: ${successCount}/${totalCount} safe actions completed.`, "fixAssistant");
 }
 
 function openStepByStepGuide() {
@@ -2252,6 +2260,12 @@ function deleteFixHistoryItem(id: string) {
 }
 
 function clearFixHistory() {
+  const confirmed = window.confirm(
+    "Are you sure? This will permanently delete all Fix History entries on this device."
+  );
+
+  if (!confirmed) return;
+
   setFixHistoryItems([]);
   saveFixHistory([]);
 }
@@ -2264,8 +2278,7 @@ async function openGameSettingsQuickAction() {
       const response = await window.fixMyGame.openFolderPath(currentLogPath);
 
       if (response?.ok) {
-        setActionMsg(`Opened the folder for your loaded ${gameTitle} log.`);
-        setTimeout(() => setActionMsg(""), 2500);
+        showActionMessage(`Opened the folder for your loaded ${gameTitle} log.`, "fixAssistant");
         return;
       }
     } catch {
@@ -2301,15 +2314,13 @@ async function openGameSettingsQuickAction() {
   if (selectedGameKey === "minecraft") {
     const openedLogs = await openLogsFolder(true);
     if (openedLogs) {
-      setActionMsg(`Opened ${gameTitle} crash logs folder.`);
-      setTimeout(() => setActionMsg(""), 2500);
+      showActionMessage(`Opened ${gameTitle} crash logs folder.`, "fixAssistant");
       return;
     }
 
     const openedMods = await openModsFolder(true);
     if (openedMods) {
-      setActionMsg(`Opened ${gameTitle} mods folder.`);
-      setTimeout(() => setActionMsg(""), 2500);
+      showActionMessage(`Opened ${gameTitle} mods folder.`, "fixAssistant");
       return;
     }
 
@@ -2318,10 +2329,10 @@ async function openGameSettingsQuickAction() {
         `No ${gameTitle} installation or crash logs were detected on this device yet.`
       );
     } else {
-      setActionMsg(
-        `${gameTitle} was detected from your loaded log, but no local game folder could be opened on this device.`
-      );
-      setTimeout(() => setActionMsg(""), 3000);
+      showActionMessage(
+  `${gameTitle} was detected from your loaded log, but no local game folder could be opened on this device.`,
+  "fixAssistant"
+);
     }
 
     return;
@@ -2330,8 +2341,7 @@ async function openGameSettingsQuickAction() {
   if (selectedGameProfile.supportsModsFolder) {
     const openedMods = await openModsFolder(true);
     if (openedMods) {
-      setActionMsg(`Opened ${gameTitle} mods folder.`);
-      setTimeout(() => setActionMsg(""), 2500);
+      showActionMessage(`Opened ${gameTitle} mods folder.`, "fixAssistant");
       return;
     }
   }
@@ -2339,8 +2349,7 @@ async function openGameSettingsQuickAction() {
   if (selectedGameProfile.supportsLogsFolder) {
     const openedLogs = await openLogsFolder(true);
     if (openedLogs) {
-      setActionMsg(`Opened ${gameTitle} logs folder.`);
-      setTimeout(() => setActionMsg(""), 2500);
+      showActionMessage(`Opened ${gameTitle} logs folder.`, "fixAssistant");
       return;
     }
   }
@@ -2350,10 +2359,10 @@ async function openGameSettingsQuickAction() {
       `No ${gameTitle} installation or crash logs were detected on this device yet.`
     );
   } else {
-    setActionMsg(
-      `${gameTitle} was detected from your loaded log, but no local game folder could be opened on this device.`
-    );
-    setTimeout(() => setActionMsg(""), 3000);
+    showActionMessage(
+  `${gameTitle} was detected from your loaded log, but no local game folder could be opened on this device.`,
+  "fixAssistant"
+);
   }
 }
   return (
@@ -2559,16 +2568,16 @@ onClick={() => {
       DETECTED LOGS
     </div>
 
-    <div className="mt-3 grid gap-2">
-      {detectedLogs.map((log) => (
+    <div className="mt-3 grid gap-2 max-h-[420px] overflow-y-auto pr-2">
+  {detectedLogs.map((log) => (
         <button
           key={log.fullPath}
           type="button"
           onClick={() => loadDetectedLog(log.fullPath)}
-          className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
+          className="w-full overflow-hidden rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left transition hover:bg-white/10"
         >
-          <div className="font-medium text-white">{log.name}</div>
-          <div className="mt-1 truncate text-xs text-white/50">{log.fullPath}</div>
+          <div className="font-medium text-white truncate">{log.name}</div>
+          <div className="mt-1 text-xs text-white/50 break-all">{log.fullPath}</div>
           <div className="mt-1 text-[11px] text-white/40">
   {typeof log.size === "number" ? `${Math.round(log.size / 1024)} KB` : ""}
 </div>
@@ -2628,10 +2637,10 @@ const activeGameKey = detectedGame || selectedGameKey;
 
 if (detectedGame && detectedGame !== selectedGameKey) {
   setSelectedGameKey(detectedGame);
-  setActionMsg(`Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`);
-  setTimeout(() => {
-    setActionMsg("");
-  }, 1800);
+  showActionMessage(
+  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+  "fixAssistant"
+);
 }
 
 if (value.trim().length > 40) {
@@ -2784,6 +2793,17 @@ if (value.trim().length > 40) {
             )}
           </div>
 
+{!loadingLimit && !isPro && remaining <= 0 ? (
+  <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/40 p-4 text-sm text-amber-100">
+    <div className="font-semibold">
+      You’ve used all free diagnostics today.
+    </div>
+    <div className="mt-1 text-amber-100/90">
+  Unlock unlimited diagnostics, automatic log discovery, full-folder scanning, saved analysis exports, and a faster troubleshooting workflow with Pro.
+</div>
+  </div>
+) : null}
+
 {/* 🔥 FIX ASSISTANT */}
 <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
@@ -2847,18 +2867,7 @@ if (value.trim().length > 40) {
   </div>
 </div>
 
-{!loadingLimit && !isPro && remaining <= 0 ? (
-  <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/40 p-4 text-sm text-amber-100">
-    <div className="font-semibold">
-      You’ve used all free diagnostics today.
-    </div>
-    <div className="mt-1 text-amber-100/90">
-  Unlock unlimited diagnostics, automatic log discovery, full-folder scanning, saved analysis exports, and a faster troubleshooting workflow with Pro.
-</div>
-  </div>
-) : null}
-
-{actionMsg ? (
+{actionMsg && actionMsgLocation === "fixAssistant" ? (
   <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
     {actionMsg}
   </div>
@@ -2954,6 +2963,11 @@ if (value.trim().length > 40) {
   </section>
 ) : null}
 
+{actionMsg && actionMsgLocation === "smartFix" ? (
+  <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
+    {actionMsg}
+  </div>
+) : null}
 
 {analysis ? (
   <section className="mt-6 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.45)] p-5">
@@ -3024,19 +3038,13 @@ if (value.trim().length > 40) {
       try {
         await copyTextReliable(modsText);
         setCopied(true);
-        setActionMsg("Suspected mods copied and saved to Fix History.");
-
-                setTimeout(() => {
-          setCopied(false);
-          setActionMsg("");
-        }, 1500);
+        showActionMessage("Suspected mods copied and saved to Fix History.", "smartFix");
+setTimeout(() => {
+  setCopied(false);
+}, 4000);
       } catch (error: unknown) {
         setCopied(false);
-        setActionMsg("Suspected mods saved to Fix History. System clipboard copy failed on this device.");
-
-        setTimeout(() => {
-          setActionMsg("");
-        }, 2500);
+        showActionMessage("Suspected mods saved to Fix History. System clipboard copy failed on this device.", "smartFix");
 
         setErrorMsg(
           error instanceof Error ? error.message : "Failed to copy suspected mods."
@@ -3060,6 +3068,12 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
   </section>
+) : null}
+
+{actionMsg && actionMsgLocation === "diagnostic" ? (
+  <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
+    {actionMsg}
+  </div>
 ) : null}
 
 <section className="mt-6">
@@ -3444,17 +3458,9 @@ if (value.trim().length > 40) {
                     onClick={async () => {
                       try {
                         await copyTextReliable(item.text);
-                        setActionMsg("History item copied to system clipboard.");
-
-                        setTimeout(() => {
-                          setActionMsg("");
-                        }, 1800);
+                        showActionMessage("History item copied to system clipboard.", "fixAssistant");
                       } catch (error: unknown) {
-                        setActionMsg("System clipboard copy failed on this device, but the item remains saved in Fix History.");
-
-                        setTimeout(() => {
-                          setActionMsg("");
-                        }, 2500);
+                        showActionMessage("System clipboard copy failed on this device, but the item remains saved in Fix History.", "fixAssistant");
 
                         setErrorMsg(
                           error instanceof Error ? error.message : "Failed to copy Fix History item."
