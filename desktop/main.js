@@ -510,6 +510,126 @@ function getCandidateInstallPaths(gameKey) {
   return candidates[gameKey] || [];
 }
 
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+  return dirPath;
+}
+
+function safeFileName(name) {
+  return String(name || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .trim();
+}
+
+function timestampForFile() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mi = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+}
+
+function getFixMyGameDataRoot() {
+  const root = path.join(app.getPath("userData"), "FixMyGame");
+  ensureDir(root);
+  return root;
+}
+
+function getBackupRoot() {
+  const dir = path.join(getFixMyGameDataRoot(), "backups");
+  ensureDir(dir);
+  return dir;
+}
+
+function getQuarantineRoot() {
+  const dir = path.join(getFixMyGameDataRoot(), "quarantine");
+  ensureDir(dir);
+  return dir;
+}
+
+function getManifestPath() {
+  return path.join(getFixMyGameDataRoot(), "fix-manifest.json");
+}
+
+function readManifest() {
+  const manifestPath = getManifestPath();
+  if (!fs.existsSync(manifestPath)) {
+    return [];
+  }
+
+  try {
+    const raw = fs.readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeManifest(entries) {
+  const manifestPath = getManifestPath();
+  fs.writeFileSync(manifestPath, JSON.stringify(entries, null, 2), "utf8");
+}
+
+function appendManifestEntry(entry) {
+  const entries = readManifest();
+  entries.unshift(entry);
+  writeManifest(entries);
+  return entry;
+}
+
+function removeManifestEntry(id) {
+  const entries = readManifest();
+  const next = entries.filter((entry) => entry.id !== id);
+  writeManifest(next);
+}
+
+function getLatestManifestEntry() {
+  const entries = readManifest();
+  return entries.length ? entries[0] : null;
+}
+
+function copyFileSafe(sourcePath, targetPath) {
+  ensureDir(path.dirname(targetPath));
+  fs.copyFileSync(sourcePath, targetPath);
+}
+
+function moveFileSafe(sourcePath, targetPath) {
+  ensureDir(path.dirname(targetPath));
+  fs.renameSync(sourcePath, targetPath);
+}
+
+function resolveModsFolderFromInstallPath(installPath) {
+  if (!installPath) return null;
+  return path.join(installPath, "mods");
+}
+
+function findMatchingModFile(modsFolder, suspectNames = []) {
+  if (!modsFolder || !fs.existsSync(modsFolder)) return null;
+
+  const files = fs.readdirSync(modsFolder);
+  const loweredSuspects = suspectNames
+    .map((name) => String(name || "").toLowerCase().trim())
+    .filter(Boolean);
+
+  for (const file of files) {
+    const lowerFile = file.toLowerCase();
+    const isJar = lowerFile.endsWith(".jar");
+    if (!isJar) continue;
+
+    for (const suspect of loweredSuspects) {
+      if (lowerFile.includes(suspect)) {
+        return path.join(modsFolder, file);
+      }
+    }
+  }
+
+  return null;
+}
+
 ipcMain.handle("detect-game-install", async (_event, gameKey) => {
   try {
     if (gameKey === "minecraft") {
@@ -711,6 +831,113 @@ ipcMain.handle("file:saveText", async (_event, { defaultPath, content }) => {
       canceled: false,
       ok: false,
       error: error.message || "Failed to save file",
+    };
+  }
+});
+
+ipcMain.handle("apply-safe-fix", async (_event, payload) => {
+  try {
+    const {
+      gameKey,
+      installPath,
+      suspectMods = [],
+      actionLabel = "quarantine_suspected_mod",
+    } = payload || {};
+
+    if (!installPath) {
+      return {
+        ok: false,
+        error: "No install path was provided.",
+      };
+    }
+
+    const modsFolder = resolveModsFolderFromInstallPath(installPath);
+    if (!modsFolder || !fs.existsSync(modsFolder)) {
+      return {
+        ok: false,
+        error: "Mods folder was not found for this game instance.",
+      };
+    }
+
+    const matchedModPath = findMatchingModFile(modsFolder, suspectMods);
+    if (!matchedModPath) {
+      return {
+        ok: false,
+        error: "No matching mod file was found to move.",
+      };
+    }
+
+    const originalFileName = path.basename(matchedModPath);
+    const stamp = timestampForFile();
+    const safeGameKey = safeFileName(gameKey || "game");
+    const backupFolder = ensureDir(path.join(getBackupRoot(), safeGameKey, stamp));
+    const quarantineFolder = ensureDir(path.join(getQuarantineRoot(), safeGameKey, stamp));
+
+    const backupPath = path.join(backupFolder, originalFileName);
+    const quarantinePath = path.join(quarantineFolder, originalFileName);
+
+    copyFileSafe(matchedModPath, backupPath);
+    moveFileSafe(matchedModPath, quarantinePath);
+
+    const manifestEntry = appendManifestEntry({
+      id: `${safeGameKey}-${stamp}-${originalFileName}`,
+      createdAt: new Date().toISOString(),
+      gameKey: gameKey || "unknown",
+      actionLabel,
+      suspectMods,
+      originalPath: matchedModPath,
+      backupPath,
+      quarantinePath,
+      fileName: originalFileName,
+      status: "applied",
+    });
+
+    return {
+      ok: true,
+      entry: manifestEntry,
+      movedFile: originalFileName,
+      backupPath,
+      quarantinePath,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to apply safe fix.",
+    };
+  }
+});
+
+ipcMain.handle("undo-last-fix", async () => {
+  try {
+    const latest = getLatestManifestEntry();
+
+    if (!latest) {
+      return {
+        ok: false,
+        error: "No previous fix was found to undo.",
+      };
+    }
+
+    if (!latest.quarantinePath || !fs.existsSync(latest.quarantinePath)) {
+      return {
+        ok: false,
+        error: "The quarantined file could not be found.",
+      };
+    }
+
+    ensureDir(path.dirname(latest.originalPath));
+    moveFileSafe(latest.quarantinePath, latest.originalPath);
+    removeManifestEntry(latest.id);
+
+    return {
+      ok: true,
+      restoredFile: latest.fileName,
+      originalPath: latest.originalPath,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to undo last fix.",
     };
   }
 });

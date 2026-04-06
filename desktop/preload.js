@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("fixMyGame", {
   openLogsFolder: (gameKey) => ipcRenderer.invoke("open-logs-folder", gameKey),
   openFolderPath: (targetPath) => ipcRenderer.invoke("open-folder-path", targetPath),
   detectGameInstall: (gameKey) => ipcRenderer.invoke("detect-game-install", gameKey),
+  applySafeFix: (payload) => ipcRenderer.invoke("apply-safe-fix", payload),
+  undoLastFix: () => ipcRenderer.invoke("undo-last-fix"),
   copyText: async (text) => {
     try {
       clipboard.writeText(String(text ?? ""));
