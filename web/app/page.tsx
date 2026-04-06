@@ -45,6 +45,37 @@ detectGameInstall?: (gameKey: string) => Promise<{
   path?: string | null;
   error?: string;
 }>;
+applySafeFix?: (payload: {
+  gameKey: string;
+  installPath: string;
+  suspectMods?: string[];
+  actionLabel?: string;
+}) => Promise<{
+  ok?: boolean;
+  error?: string;
+  movedFile?: string;
+  backupPath?: string;
+  quarantinePath?: string;
+  entry?: {
+    id: string;
+    createdAt: string;
+    gameKey: string;
+    actionLabel: string;
+    suspectMods: string[];
+    originalPath: string;
+    backupPath: string;
+    quarantinePath: string;
+    fileName: string;
+    status: string;
+  };
+}>;
+
+undoLastFix?: () => Promise<{
+  ok?: boolean;
+  error?: string;
+  restoredFile?: string;
+  originalPath?: string;
+}>;
 copyText?: (text: string) => Promise<{
         ok?: boolean;
         error?: string;
@@ -1377,9 +1408,12 @@ export default function Page() {
   const [showFixGuide, setShowFixGuide] = useState(false);
   const [showFixPreviewModal, setShowFixPreviewModal] = useState(false);
   const [showFixHistoryModal, setShowFixHistoryModal] = useState(false);
+  const [fixPreviewError, setFixPreviewError] = useState("");
   const [actionMsgLocation, setActionMsgLocation] = useState<"fixAssistant" | "smartFix" | "diagnostic" | null>(null);
   const [showProModal, setShowProModal] = useState(false);
   const [desktopConnected, setDesktopConnected] = useState(false);
+ const [applyingSafeFix, setApplyingSafeFix] = useState(false);
+const [undoingSafeFix, setUndoingSafeFix] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
   const [detectedLogs, setDetectedLogs] = useState<
   { name: string; fullPath: string; lastModified?: number; size?: number }[]
@@ -1520,6 +1554,24 @@ const fixPlan = useMemo(
   [selectedGameKey, gameTitle, analysis, detectedSignals, selectedGameProfile]
 );
 
+const safeFixSuspects = useMemo(() => {
+  const suspectsFromAnalysis =
+    analysis?.detectedSignals?.suspectedMods ||
+    detectedSignals?.suspectedMods ||
+    [];
+
+  const normalized = [...suspectsFromAnalysis, ...liveMods]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  return Array.from(new Set(normalized)).slice(0, 6);
+}, [analysis, detectedSignals, liveMods]);
+
+const canApplySafeFix =
+  desktopConnected &&
+  Boolean(gameInstallPath) &&
+  safeFixSuspects.length > 0;
+
 useEffect(() => {
 if (typeof window !== "undefined") {
   let vid = window.localStorage.getItem("fmg_vid");
@@ -1569,9 +1621,37 @@ setDebugProStatus(
   };
 }, []);
 
+const detectSelectedGameInstall = React.useCallback(async (gameKey = selectedGameKey) => {
+  if (!window.fixMyGame?.detectGameInstall) {
+    setGameInstallDetected(null);
+    setGameInstallPath("");
+    return;
+  }
+
+  try {
+    setCheckingInstall(true);
+
+    const response = await window.fixMyGame.detectGameInstall(gameKey);
+
+    if (!response?.ok) {
+      setGameInstallDetected(false);
+      setGameInstallPath("");
+      return;
+    }
+
+    setGameInstallDetected(Boolean(response.detected));
+    setGameInstallPath(response.path || "");
+  } catch {
+    setGameInstallDetected(false);
+    setGameInstallPath("");
+  } finally {
+    setCheckingInstall(false);
+  }
+}, [selectedGameKey]);
+
 useEffect(() => {
   detectSelectedGameInstall(selectedGameKey);
-}, [selectedGameKey]);
+}, [selectedGameKey, detectSelectedGameInstall]);
 
 useEffect(() => {
   if (typeof window === "undefined") return;
@@ -1625,31 +1705,131 @@ useEffect(() => {
   );
 }
 
-async function detectSelectedGameInstall(gameKey = selectedGameKey) {
-  if (!window.fixMyGame?.detectGameInstall) {
-    setGameInstallDetected(null);
-    setGameInstallPath("");
+  async function applySafeFixNow() {
+  setErrorMsg("");
+  setFixPreviewError("");
+
+  if (!window.fixMyGame?.applySafeFix) {
+  setFixPreviewError("Safe Fix is only available inside the Electron desktop app.");
+  return;
+}
+
+  if (!gameInstallPath) {
+    setFixPreviewError("No detected game install path is available for Safe Fix.");
+    return;
+  }
+
+  const suspectMods = safeFixSuspects;
+
+  if (suspectMods.length === 0) {
+    setFixPreviewError("No suspected mods were available for Safe Fix.");
     return;
   }
 
   try {
-    setCheckingInstall(true);
+    setApplyingSafeFix(true);
 
-    const response = await window.fixMyGame.detectGameInstall(gameKey);
+    const response = await window.fixMyGame.applySafeFix({
+      gameKey: selectedGameKey,
+      installPath: gameInstallPath,
+      suspectMods,
+      actionLabel: "safe_fix_quarantine_mod",
+    });
 
     if (!response?.ok) {
-      setGameInstallDetected(false);
-      setGameInstallPath("");
+      setFixPreviewError(response?.error || "Safe Fix failed.");
       return;
     }
 
-    setGameInstallDetected(Boolean(response.detected));
-    setGameInstallPath(response.path || "");
-  } catch {
-    setGameInstallDetected(false);
-    setGameInstallPath("");
+    const movedFile = response.movedFile || "suspected mod";
+
+    setActionMsg(`Safe Fix applied: moved ${movedFile} to quarantine and created a backup.`);
+
+    setShowFixPreviewModal(false);
+
+    const historyText = [
+      `Safe Fix applied.`,
+      ``,
+      `Moved File: ${movedFile}`,
+      `Suspected Mods: ${suspectMods.join(", ") || "None"}`,
+      `Backup Path: ${response.backupPath || "Unknown"}`,
+      `Quarantine Path: ${response.quarantinePath || "Unknown"}`,
+    ].join("\n");
+
+    const nextHistory = pushFixHistoryItem({
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      gameKey: selectedGameKey,
+      gameTitle,
+      type: "fix_plan",
+      title: `${gameTitle} safe fix`,
+      text: historyText,
+    });
+
+    setFixHistoryItems(nextHistory);
+
+    setTimeout(() => {
+      setActionMsg("");
+    }, 5000);
+  } catch (error) {
+    setFixPreviewError(
+      error instanceof Error ? error.message : "Safe Fix failed."
+    );
   } finally {
-    setCheckingInstall(false);
+    setApplyingSafeFix(false);
+  }
+}
+
+  async function undoLastSafeFix() {
+  setErrorMsg("");
+
+  if (!window.fixMyGame?.undoLastFix) {
+    setErrorMsg("Undo Last Fix is only available inside the Electron desktop app.");
+    return;
+  }
+
+  try {
+    setUndoingSafeFix(true);
+
+    const response = await window.fixMyGame.undoLastFix();
+
+    if (!response?.ok) {
+      setErrorMsg(response?.error || "Undo Last Fix failed.");
+      return;
+    }
+
+    const restoredFile = response.restoredFile || "mod";
+
+    setActionMsg(`Undo complete: restored ${restoredFile}.`);
+
+    const historyText = [
+      `Undo Last Fix completed.`,
+      ``,
+      `Restored File: ${restoredFile}`,
+      `Restored To: ${response.originalPath || "Unknown"}`,
+    ].join("\n");
+
+    const nextHistory = pushFixHistoryItem({
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      gameKey: selectedGameKey,
+      gameTitle,
+      type: "fix_plan",
+      title: `${gameTitle} undo last fix`,
+      text: historyText,
+    });
+
+    setFixHistoryItems(nextHistory);
+
+    setTimeout(() => {
+      setActionMsg("");
+    }, 5000);
+  } catch (error) {
+    setErrorMsg(
+      error instanceof Error ? error.message : "Undo Last Fix failed."
+    );
+  } finally {
+    setUndoingSafeFix(false);
   }
 }
 
@@ -1975,7 +2155,7 @@ async function openLogsFolder(silent = false) {
     
     const logToUse = overrideCrashLog ?? crashLog;
 
-if (!logToUse.trim()) {
+if (typeof logToUse !== "string" || !logToUse.trim()) {
   setErrorMsg("Paste a crash log / error first.");
   return;
 }
@@ -2187,8 +2367,8 @@ async function runFixPlan() {
         title: action.title,
         ok,
         detail: ok
-          ? "Mods folder opened successfully."
-          : "Could not open the mods folder on this device.",
+  ? "Mods folder opened successfully."
+  : `Could not open the ${gameTitle} mods folder because no local game install was found on this device.`,
       });
       continue;
     }
@@ -2200,8 +2380,8 @@ async function runFixPlan() {
         title: action.title,
         ok,
         detail: ok
-          ? "Logs folder opened successfully."
-          : "Could not open the logs folder on this device.",
+  ? "Logs folder opened successfully."
+  : `Could not open the ${gameTitle} logs folder because no local game install was found on this device.`,
       });
       continue;
     }
@@ -2463,7 +2643,6 @@ async function openGameSettingsQuickAction() {
 </div>
 
       <section className="mt-10 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
-        <div className="grid gap-4">
           <Field label="SELECTED GAME">
   <DarkSelect
   value={gameTitle}
@@ -2503,7 +2682,7 @@ async function openGameSettingsQuickAction() {
   />
 </Field>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="mt-3 flex flex-wrap gap-3">
   <button
     type="button"
     onClick={loadLogFromComputer}
@@ -2668,84 +2847,85 @@ if (value.trim().length > 40) {
 }
             />
           </Field>
-          {quickSignals.loader || quickSignals.java || quickSignals.error ? (
-  <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-      LIVE DETECTION
+          <div className="mt-4 space-y-3">
+  {quickSignals.loader || quickSignals.java || quickSignals.error ? (
+    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        LIVE DETECTION
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {quickSignals.loader ? (
+          <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-200">
+            {getLoaderLabelForGame(selectedGameKey)}: {quickSignals.loader}
+          </span>
+        ) : null}
+
+        {quickSignals.java && getJavaLabelForGame(selectedGameKey) ? (
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
+            {getJavaLabelForGame(selectedGameKey)} {quickSignals.java}
+          </span>
+        ) : null}
+
+        {quickSignals.error ? (
+          <span className="rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-200">
+            Error: {quickSignals.error}
+          </span>
+        ) : null}
+      </div>
     </div>
+  ) : null}
 
-    <div className="mt-3 flex flex-wrap gap-2">
-      {quickSignals.loader ? (
-  <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-200">
-    {getLoaderLabelForGame(selectedGameKey)}: {quickSignals.loader}
-  </span>
-) : null}
+  {logHighlights.length > 0 ? (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="text-xs font-semibold tracking-widest text-white/70">
+        LOG HIGHLIGHTS
+      </div>
 
-      {quickSignals.java && getJavaLabelForGame(selectedGameKey) ? (
-  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
-    {getJavaLabelForGame(selectedGameKey)} {quickSignals.java}
-  </span>
-) : null}
-
-      {quickSignals.error ? (
-  <span className="rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-200">
-    Error: {quickSignals.error}
-  </span>
-) : null}
+      <div className="mt-3 grid gap-2">
+        {logHighlights.map((line, index) => (
+          <div
+            key={`${index}-${line}`}
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white/85 whitespace-pre-wrap break-words overflow-hidden"
+          >
+            {line}
+          </div>
+        ))}
+      </div>
     </div>
-  </div>
-) : null}
-        </div>
+  ) : null}
 
-{logHighlights.length > 0 ? (
-  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-    <div className="text-xs font-semibold tracking-widest text-white/70">
-      LOG HIGHLIGHTS
+  {liveMods.length > 0 ? (
+    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="text-xs font-semibold tracking-widest text-white/70">
+        LIVE MODS DETECTED
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {liveMods.map((mod) => (
+          <span
+            key={mod}
+            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80"
+          >
+            {mod}
+          </span>
+        ))}
+      </div>
     </div>
+  ) : null}
 
-    <div className="mt-3 grid gap-2">
-      {logHighlights.map((line, index) => (
-        <div
-  key={`${index}-${line}`}
-  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white/85 whitespace-pre-wrap break-words overflow-hidden"
->
-  {line}
+  {mostSuspiciousLine ? (
+    <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-red-200/80">
+        MOST SUSPICIOUS LINE
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-sm text-white/90">
+        {mostSuspiciousLine}
+      </div>
+    </div>
+  ) : null}
 </div>
-      ))}
-    </div>
-  </div>
-) : null}
-
-{liveMods.length > 0 ? (
-  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-    <div className="text-xs font-semibold tracking-widest text-white/70">
-      LIVE MODS DETECTED
-    </div>
-
-    <div className="mt-3 flex flex-wrap gap-2">
-      {liveMods.map((mod) => (
-        <span
-          key={mod}
-          className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80"
-        >
-          {mod}
-        </span>
-      ))}
-    </div>
-  </div>
-) : null}
-
-{mostSuspiciousLine ? (
-  <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-4">
-    <div className="text-xs font-semibold tracking-widest text-red-200/80">
-      MOST SUSPICIOUS LINE
-    </div>
-
-    <div className="mt-3 rounded-xl bg-black/20 px-3 py-3 font-mono text-sm text-white/90">
-      {mostSuspiciousLine}
-    </div>
-  </div>
-) : null}
 
         <div className="mt-6">
           <button
@@ -2753,7 +2933,7 @@ if (value.trim().length > 40) {
     "flex w-full items-center justify-center gap-3 rounded-xl px-5 py-4 text-lg font-semibold transition",
     canRun && !running ? "bg-blue-600 hover:bg-blue-500" : "bg-blue-900/60 text-white/60",
   ].join(" ")}
-  onClick={runDiagnostic}
+  onClick={() => runDiagnostic()}
   disabled={!canRun || running}
 >
     {running ? (
@@ -2832,18 +3012,28 @@ if (value.trim().length > 40) {
   <button
     type="button"
     onClick={() => {
-      if (!fixPlan) {
-        setErrorMsg("Run a diagnostic first.");
-        return;
-      }
-      setFixExecutionResults([]);
-      setShowFixPreviewModal(true);
-    }}
+  if (!fixPlan) {
+    setErrorMsg("Run a diagnostic first.");
+    return;
+  }
+  setFixExecutionResults([]);
+  setFixPreviewError("");
+  setShowFixPreviewModal(true);
+}}
     disabled={!analysis || !fixPlan}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
     🛠️ Let App Fix Now
   </button>
+
+<button
+  type="button"
+  onClick={undoLastSafeFix}
+  disabled={undoingSafeFix}
+  className="w-full rounded-2xl border border-white/10 bg-slate-950/40 px-5 py-4 text-left text-white transition hover:bg-slate-900/70 disabled:cursor-not-allowed disabled:opacity-60"
+>
+  {undoingSafeFix ? "↩ Undoing Last Fix..." : "↩ Undo Last Fix"}
+</button>
 
     <button
     type="button"
@@ -2906,11 +3096,11 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
 
-                    {errorMsg ? (
-            <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
-              {errorMsg}
-            </div>
-          ) : null}
+{errorMsg ? (
+  <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+    {errorMsg}
+  </div>
+) : null}
         </div>
       </section>
 
@@ -3058,7 +3248,7 @@ setTimeout(() => {
 
   <button
     type="button"
-    onClick={runDiagnostic}
+    onClick={() => runDiagnostic()}
     disabled={!canRun || running}
     className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
   >
@@ -3167,9 +3357,9 @@ setTimeout(() => {
         <span>{formatted.label}</span>
       </div>
 
-      <div className="mt-2 h-2 w-full rounded bg-white/10">
+      <div className="mt-2 h-2 w-full rounded bg-white/10 overflow-hidden">
         <div
-          className="h-2 rounded bg-blue-500"
+          className="h-2 rounded bg-blue-500 transition-all"
           style={{
             width: `${Math.max(8, Math.min(100, formatted.percent))}%`,
           }}
@@ -3328,6 +3518,16 @@ setTimeout(() => {
         </div>
       </div>
 
+      {!gameInstallPath ? (
+  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
+    Safe Fix is unavailable right now because FixMyGame does not detect a local {gameTitle} install on this device. Pasted logs can still be diagnosed, but Safe Fix needs a real local game folder.
+  </div>
+) : safeFixSuspects.length === 0 ? (
+  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
+    Safe Fix is unavailable right now because no suspected mods were detected from this crash.
+  </div>
+) : null}
+
       <div className="mt-5 grid gap-3">
         {fixPlan.actions.map((action) => (
           <div
@@ -3358,6 +3558,12 @@ setTimeout(() => {
         ))}
       </div>
 
+      {fixPreviewError ? (
+  <div className="mt-5 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+    {fixPreviewError}
+  </div>
+) : null}
+
       <div className="mt-6 flex flex-wrap justify-end gap-3">
         <button
           type="button"
@@ -3376,6 +3582,21 @@ setTimeout(() => {
         >
           Copy Steps Instead
         </button>
+
+        <button
+  type="button"
+  onClick={applySafeFixNow}
+  disabled={applyingSafeFix || !canApplySafeFix}
+  className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-5 py-3 font-medium text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+>
+  {applyingSafeFix
+    ? "Applying Safe Fix..."
+    : !gameInstallPath
+    ? "Apply Safe Fix (Needs Local Game Install)"
+    : safeFixSuspects.length === 0
+    ? "Apply Safe Fix (No Suspected Mods)"
+    : "Apply Safe Fix"}
+</button>
 
         <button
           type="button"
@@ -3625,9 +3846,9 @@ function Field(props: {
   onRightLinkClick?: () => void;
 }) {
   return (
-    <div className="grid gap-2">
+    <div className="flex flex-col gap-1 mt-4">
       <div className="flex items-center gap-3">
-        <div className="text-xs font-semibold tracking-widest text-white/70">
+        <div className="text-xs font-semibold tracking-widest text-white/70 mb-1">
           {props.label}
         </div>
         <div className="flex-1" />
