@@ -744,20 +744,61 @@ function quickDetect(log: string, gameKey: string) {
       log.match(/java[:\s]+([0-9][^\n]*)/i)?.[1]?.trim() ||
       null;
 
-    const rawError =
-      log.match(/([A-Za-z0-9_.]*(Exception|Error))(?::\s*[^\n]*)?/i)?.[1]?.trim() ||
-      null;
+    let error: string | null = null;
+let issue: string | null = null;
 
-    const error =
-      rawError?.toLowerCase() === "error"
-        ? "UnknownError"
-        : rawError;
+if (lower.includes("unsupportedclassversionerror")) {
+  error = "UnsupportedClassVersionError";
+  issue = "Java version mismatch";
+} else if (lower.includes("unsupported class file major version")) {
+  error = "UnsupportedClassVersionError";
+  issue = "Java version mismatch";
+} else if (lower.includes("outofmemoryerror")) {
+  error = "OutOfMemoryError";
+  issue = "Out of memory";
+} else if (lower.includes("nosuchmethoderror")) {
+  error = "NoSuchMethodError";
+  issue = "Mod version conflict";
+} else if (lower.includes("classnotfoundexception")) {
+  error = "ClassNotFoundException";
+  issue = "Missing mod or dependency";
+} else if (lower.includes("invalidinjectionexception")) {
+  error = "InvalidInjectionException";
+  issue = "Mixin injection failure";
+} else if (lower.includes("mixintransformererror")) {
+  error = "MixinTransformerError";
+  issue = "Mixin transformation failure";
+} else {
+  const rawError =
+    log.match(/([A-Za-z0-9_.]*(Exception|Error))(?::\s*[^\n]*)?/i)?.[1]?.trim() ||
+    null;
 
-    return {
-      loader,
-      java,
-      error,
-    };
+  error =
+    rawError?.toLowerCase() === "error"
+      ? "UnknownError"
+      : rawError;
+
+  if (error === "UnknownError") {
+  issue = "Unknown issue";
+} else if (error === "RuntimeException") {
+  issue = "Runtime failure";
+} else if (error === "IllegalArgumentException") {
+  issue = "Invalid game or mod input";
+} else if (error === "UnsupportedClassVersionError") {
+  issue = "Java version mismatch";
+} else if (error === "OutOfMemoryError") {
+  issue = "Out of memory";
+} else {
+  issue = "Game crash detected";
+}
+}
+
+return {
+  loader,
+  java,
+  issue,
+  error,
+};
   }
 
   if (gameKey === "sims4") {
@@ -768,6 +809,7 @@ function quickDetect(log: string, gameKey: string) {
     return {
       loader: "Script Mods / CC",
       java: null,
+      issue: error ? "Script Mod Issue" : null,
       error,
     };
   }
@@ -780,6 +822,7 @@ function quickDetect(log: string, gameKey: string) {
     return {
       loader: "SKSE / Mod Manager",
       java: null,
+      issue: error ? "Plugin or SKSE Issue" : null,
       error,
     };
   }
@@ -792,20 +835,25 @@ function quickDetect(log: string, gameKey: string) {
     return {
       loader: "F4SE / Mod Manager",
       java: null,
+      issue: error ? "Plugin or F4SE Issue" : null,
       error,
     };
   }
 
   const rawError =
-    log.match(/([A-Za-z0-9_.]*(Exception|Error))(?::\s*[^\n]*)?/i)?.[1]?.trim() ||
-    log.match(/(crash|error|failed)/i)?.[1] ||
-    null;
+  log.match(/([A-Za-z0-9_.]*(Exception|Error))(?::\s*[^\n]*)?/i)?.[1]?.trim() ||
+  log.match(/(crash|error|failed)/i)?.[1] ||
+  null;
 
-  return {
-    loader: null,
-    java: null,
-    error: rawError?.toLowerCase() === "error" ? "UnknownError" : rawError,
-  };
+const finalError =
+  rawError?.toLowerCase() === "error" ? "UnknownError" : rawError;
+
+return {
+  loader: null,
+  java: null,
+  issue: finalError === "UnknownError" ? "Unknown issue" : finalError,
+  error: finalError,
+};
 }
 
 function formatProbabilityItem(item: string, index: number) {
@@ -1489,6 +1537,7 @@ export default function Page() {
   const [quickSignals, setQuickSignals] = useState<{
     loader?: string | null;
     java?: string | null;
+    issue?: string | null;
     error?: string | null;
   }>({});
   const [debugVid, setDebugVid] = useState("");
@@ -2962,7 +3011,7 @@ onClick={() => {
 </div>
 
 {hasScannedLogs && detectedLogs.length === 0 ? (
-  <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/70">
+  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/70">
     No {gameTitle} logs were found in the detected folders yet. Try &ldquo;Load Crash Log From Computer&rdquo; or &ldquo;Scan Entire Folder&rdquo;.
   </div>
 ) : null}
@@ -3017,7 +3066,7 @@ if (value.trim().length > 40) {
             />
           </Field>
           <div className="mt-4 space-y-3">
-  {quickSignals.loader || quickSignals.java || quickSignals.error ? (
+  {quickSignals.loader || quickSignals.java || quickSignals.issue || quickSignals.error ? (
     <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
       <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
         LIVE DETECTION
@@ -3036,11 +3085,17 @@ if (value.trim().length > 40) {
           </span>
         ) : null}
 
-        {quickSignals.error ? (
-          <span className="rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-200">
-            Error: {quickSignals.error}
-          </span>
-        ) : null}
+        {quickSignals.issue ? (
+  <span className="rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-200">
+    Issue: {quickSignals.issue}
+  </span>
+) : null}
+
+{quickSignals.error && quickSignals.error !== quickSignals.issue ? (
+  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/75">
+    Technical: {quickSignals.error}
+  </span>
+) : null}
       </div>
     </div>
   ) : null}
