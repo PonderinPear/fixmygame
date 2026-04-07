@@ -1143,7 +1143,7 @@ function getProModalContent(
     eyebrow: "FIXMYGAME PRO",
     title: `Upgrade to unlock automatic ${gameLabel} log discovery`,
     description:
-      `FixMyGame Pro can automatically find likely ${gameLabel} logs, load the best candidate, and speed up your troubleshooting workflow.`,
+      `FixMyGame Pro can automatically find likely ${gameLabel} logs, load the best one, and make troubleshooting much faster.`,
     features: [
       "Unlimited diagnostics",
       `Automatic ${gameLabel} log discovery`,
@@ -1160,7 +1160,7 @@ function getProModalContent(
     eyebrow: "FIXMYGAME PRO",
     title: "Upgrade to unlock full-folder scanning",
     description:
-      `FixMyGame Pro can scan an entire selected folder, surface likely ${gameLabel} logs, and load the best candidate automatically.`,
+      `FixMyGame Pro can scan an entire folder, find likely ${gameLabel} logs, and load the best one automatically.`,
     features: [
       "Unlimited diagnostics",
       `Auto Detect ${gameLabel} Logs`,
@@ -1177,7 +1177,7 @@ function getProModalContent(
     eyebrow: "FIXMYGAME PRO",
     title: "Upgrade to unlock saved analysis exports",
     description:
-      `FixMyGame Pro lets you save your ${gameLabel} diagnosis to a file so you can keep it, share it, or compare multiple crash runs.`,
+      `FixMyGame Pro lets you save your ${gameLabel} results to a file so you can keep them, share them, or compare them later.`,
     features: [
       "Unlimited diagnostics",
       `Auto Detect ${gameLabel} Logs`,
@@ -1192,7 +1192,7 @@ function getProModalContent(
     default:
     return {
     eyebrow: "FIXMYGAME PRO",
-    title: "Upgrade to unlock the full desktop workflow",
+    title: "Upgrade to unlock the full FixMyGame workflow",
     description:
       `FixMyGame Pro gives you a faster, more complete way to diagnose ${gameLabel} crashes without manual digging.`,
     features: [
@@ -1413,7 +1413,7 @@ export default function Page() {
   const [showProModal, setShowProModal] = useState(false);
   const [desktopConnected, setDesktopConnected] = useState(false);
  const [applyingSafeFix, setApplyingSafeFix] = useState(false);
-const [undoingSafeFix, setUndoingSafeFix] = useState(false);
+  const [undoingSafeFix, setUndoingSafeFix] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
   const [detectedLogs, setDetectedLogs] = useState<
   { name: string; fullPath: string; lastModified?: number; size?: number }[]
@@ -1434,6 +1434,11 @@ const [undoingSafeFix, setUndoingSafeFix] = useState(false);
   const [logHighlights, setLogHighlights] = useState<string[]>([]);
   const [liveMods, setLiveMods] = useState<string[]>([]);
   const [mostSuspiciousLine, setMostSuspiciousLine] = useState<string | null>(null);
+  const [showFixFeedback, setShowFixFeedback] = useState(false);
+  const [lastFixResult, setLastFixResult] = useState<{
+  file?: string;
+  mods?: string[];
+  } | null>(null);
   const canRun = useMemo(() => isPro || remaining > 0, [isPro, remaining]);
   const smartFixPath = useMemo(
     () => getSmartFixPath(detectedSignals, analysis, selectedGameKey),
@@ -1708,11 +1713,12 @@ useEffect(() => {
   async function applySafeFixNow() {
   setErrorMsg("");
   setFixPreviewError("");
+  setFixExecutionResults([]);
 
   if (!window.fixMyGame?.applySafeFix) {
-  setFixPreviewError("Safe Fix is only available inside the Electron desktop app.");
-  return;
-}
+    setFixPreviewError("Safe Fix is only available inside the Electron desktop app.");
+    return;
+  }
 
   if (!gameInstallPath) {
     setFixPreviewError("No detected game install path is available for Safe Fix.");
@@ -1737,15 +1743,63 @@ useEffect(() => {
     });
 
     if (!response?.ok) {
-      setFixPreviewError(response?.error || "Safe Fix failed.");
-      return;
-    }
+  const detail = response?.error || "Safe Fix failed.";
+
+  setFixExecutionResults([
+    {
+      id: "safe_fix_failed",
+      title: "Safe Fix failed",
+      ok: false,
+      detail,
+    },
+  ]);
+
+  setFixPreviewError(detail);
+  return;
+}
 
     const movedFile = response.movedFile || "suspected mod";
 
-    setActionMsg(`Safe Fix applied: moved ${movedFile} to quarantine and created a backup.`);
+setFixExecutionResults([
+  {
+    id: "safe_fix_mods_used",
+    title: "Safe Fix: checked likely problem mods",
+    ok: true,
+    detail:
+      suspectMods.length > 0
+        ? `Checked these suspected mods: ${suspectMods.join(", ")}.`
+        : "No suspected mods were listed.",
+  },
+  {
+    id: "safe_fix_quarantine",
+    title: "Safe Fix: moved likely problem mod",
+    ok: true,
+    detail: `Moved ${movedFile} to quarantine successfully.`,
+  },
+  {
+    id: "safe_fix_backup",
+    title: "Safe Fix: backup created",
+    ok: true,
+    detail: response.backupPath
+      ? `Backup created at: ${response.backupPath}`
+      : "Backup was created successfully.",
+  },
+  {
+    id: "safe_fix_quarantine_path",
+    title: "Safe Fix: new file location",
+    ok: true,
+    detail: response.quarantinePath
+      ? `Stored quarantined file at: ${response.quarantinePath}`
+      : "Quarantined file location was created successfully.",
+  },
+]);
 
-    setShowFixPreviewModal(false);
+setShowFixPreviewModal(false);
+
+showActionMessage(
+  `Safe Fix applied: moved ${movedFile}. Launch the game again, then run another diagnostic if needed.`,
+  "fixAssistant"
+);
 
     const historyText = [
       `Safe Fix applied.`,
@@ -1767,10 +1821,12 @@ useEffect(() => {
     });
 
     setFixHistoryItems(nextHistory);
-
-    setTimeout(() => {
-      setActionMsg("");
-    }, 5000);
+    setLastFixResult({
+      file: movedFile,
+      mods: suspectMods,
+    });
+    setShowFixFeedback(true);
+    await detectSelectedGameInstall(selectedGameKey);
   } catch (error) {
     setFixPreviewError(
       error instanceof Error ? error.message : "Safe Fix failed."
@@ -1782,6 +1838,7 @@ useEffect(() => {
 
   async function undoLastSafeFix() {
   setErrorMsg("");
+  setFixExecutionResults([]);
 
   if (!window.fixMyGame?.undoLastFix) {
     setErrorMsg("Undo Last Fix is only available inside the Electron desktop app.");
@@ -1794,13 +1851,44 @@ useEffect(() => {
     const response = await window.fixMyGame.undoLastFix();
 
     if (!response?.ok) {
-      setErrorMsg(response?.error || "Undo Last Fix failed.");
-      return;
-    }
+  const detail = response?.error || "Undo Last Fix failed.";
+
+  setFixExecutionResults([
+    {
+      id: "undo_fix_failed",
+      title: "Undo Last Fix failed",
+      ok: false,
+      detail,
+    },
+  ]);
+
+  setErrorMsg(detail);
+  return;
+}
 
     const restoredFile = response.restoredFile || "mod";
 
-    setActionMsg(`Undo complete: restored ${restoredFile}.`);
+setFixExecutionResults([
+  {
+    id: "undo_fix_restore",
+    title: "Undo Last Fix: restored mod file",
+    ok: true,
+    detail: `Restored ${restoredFile} successfully.`,
+  },
+  {
+    id: "undo_fix_location",
+    title: "Undo Last Fix: returned file to original folder",
+    ok: true,
+    detail: response.originalPath
+      ? `Returned file to: ${response.originalPath}`
+      : "Returned the file to its original location.",
+  },
+]);
+
+showActionMessage(
+  `Undo complete: restored ${restoredFile}. You can launch the game again or run another diagnostic if needed.`,
+  "fixAssistant"
+);
 
     const historyText = [
       `Undo Last Fix completed.`,
@@ -1820,10 +1908,7 @@ useEffect(() => {
     });
 
     setFixHistoryItems(nextHistory);
-
-    setTimeout(() => {
-      setActionMsg("");
-    }, 5000);
+    await detectSelectedGameInstall(selectedGameKey);
   } catch (error) {
     setErrorMsg(
       error instanceof Error ? error.message : "Undo Last Fix failed."
@@ -2742,7 +2827,7 @@ onClick={() => {
 </div>
 
 {detectedLogs.length > 0 ? (
-  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+  <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4">
     <div className="text-xs font-semibold tracking-widest text-white/70">
       DETECTED LOGS
     </div>
@@ -2997,7 +3082,7 @@ if (value.trim().length > 40) {
     disabled={!analysis}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    ⚡ Copy Quick Fix (Recommended)
+    ⚡ Copy Recommended Fix
   </button>
 
     <button
@@ -3006,7 +3091,7 @@ if (value.trim().length > 40) {
     disabled={!analysis}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    🧭 Step-by-Step Fix Guide
+    🧭 View Step-by-Step Guide
   </button>
 
   <button
@@ -3023,7 +3108,7 @@ if (value.trim().length > 40) {
     disabled={!analysis || !fixPlan}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    🛠️ Let App Fix Now
+    🛠️ Fix This for Me
   </button>
 
 <button
@@ -3048,12 +3133,12 @@ if (value.trim().length > 40) {
     onClick={openGameSettingsQuickAction}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30"
   >
-    📂 Open Game Settings
+    📂 Open Game Folder
   </button>
   </div>
 
   <div className="mt-3 text-xs text-white/55">
-    Currently copies the recommended repair steps. Automated fixes with permission are planned for a future update.
+    FixMyGame can guide you now and apply safe changes when available. More automatic repair options are coming in a future update.
   </div>
 </div>
 
@@ -3066,7 +3151,7 @@ if (value.trim().length > 40) {
 {fixExecutionResults.length > 0 ? (
   <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
     <div className="text-xs font-semibold tracking-widest text-white/60">
-      FIX PLAN RESULTS
+      FIX RESULTS
     </div>
 
     <div className="mt-3 grid gap-2">
@@ -3252,7 +3337,7 @@ setTimeout(() => {
     disabled={!canRun || running}
     className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    {running ? "Running..." : "Re-run Diagnostic"}
+    {running ? "Running..." : "Run Again"}
   </button>
 </div>
   </div>
@@ -3293,7 +3378,7 @@ setTimeout(() => {
       : "border border-amber-400/20 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15",
   ].join(" ")}
 >
-    {isPro ? (saved ? "Saved!" : "Save Analysis") : "Save Export (Pro)"}
+    {isPro ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
 </button>
 
   <button
@@ -3301,7 +3386,7 @@ setTimeout(() => {
     onClick={copyResult}
     className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80 transition hover:bg-white/10 hover:text-white"
   >
-    {copied ? "Copied!" : "Copy Result"}
+    {copied ? "Copied!" : "Copy Results"}
   </button>
 </div>
       </div>
@@ -3411,7 +3496,7 @@ setTimeout(() => {
     </div>
   ) : (
     <div className="rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.35)] p-5 text-white/70">
-  Paste a {gameTitle} crash log, error report, or plugin/mod diagnostic and run a scan to see results here.
+  Paste a {gameTitle} crash log or error report, then run a diagnostic to see results here.
 </div>
   )}
 </section>
@@ -3498,7 +3583,7 @@ setTimeout(() => {
       onClick={(e) => e.stopPropagation()}
     >
       <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-        FIX PREVIEW
+        REPAIR PREVIEW
       </div>
 
       <h2 className="mt-2 text-2xl font-bold text-white">
@@ -3511,10 +3596,10 @@ setTimeout(() => {
 
       <div className="mt-5 rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
         <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
-          WHAT FIXMYGAME WILL DO NOW
+          WHAT FIXMYGAME CAN DO RIGHT NOW
         </div>
         <div className="mt-2 text-white/90">
-          Only safe helper actions will run in this version. Direct file edits, mod disabling, mod moves, and launcher changes are planned for a later update with backups and rollback support.
+          This version only runs safe actions. Bigger changes like editing files, disabling mods automatically, moving multiple mods, and changing launcher settings are planned for a future update with backup and restore support.
         </div>
       </div>
 
@@ -3580,7 +3665,7 @@ setTimeout(() => {
           disabled={runningFixPlan}
           className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Copy Steps Instead
+          Copy Fix Steps
         </button>
 
         <button
@@ -3604,12 +3689,56 @@ setTimeout(() => {
           disabled={runningFixPlan}
           className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {runningFixPlan ? "Running Safe Fixes..." : "Proceed"}
+          {runningFixPlan ? "Running Safe Fixes..." : "Run Safe Actions"}
         </button>
       </div>
     </div>
   </div>
 ) : null}
+
+{showFixFeedback ? (
+  <div className="fixed bottom-6 right-6 z-50 w-[340px] rounded-2xl border border-white/10 bg-[#071224] p-5 shadow-2xl">
+    <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
+      FIX RESULT
+    </div>
+
+    <div className="mt-2 text-white font-semibold">
+      Did this fix your issue?
+    </div>
+
+    <div className="mt-2 text-sm text-white/70">
+      {lastFixResult?.file
+        ? `We moved ${lastFixResult.file} to try to resolve the crash.`
+        : "We applied a safe fix to your game."}
+    </div>
+
+    <div className="mt-4 flex gap-2">
+      <button
+        onClick={() => {
+          setShowFixFeedback(false);
+          showActionMessage("Nice — fix confirmed.", "fixAssistant");
+        }}
+        className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 font-medium text-black hover:bg-emerald-400"
+      >
+        ✅ Fixed it
+      </button>
+
+      <button
+        onClick={() => {
+          setShowFixFeedback(false);
+          showActionMessage(
+            "Got it — try another fix or re-run diagnostic.",
+            "fixAssistant"
+          );
+        }}
+        className="flex-1 rounded-xl bg-red-500/20 px-3 py-2 font-medium text-red-200 hover:bg-red-500/30"
+      >
+        ❌ Still crashing
+      </button>
+    </div>
+  </div>
+) : null}
+
 {showFixHistoryModal ? (
   <div
     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
@@ -3622,15 +3751,15 @@ setTimeout(() => {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-            FIX HISTORY
+            SAVED HISTORY
           </div>
 
           <h2 className="mt-2 text-2xl font-bold text-white">
-            Your saved FixMyGame copies
+            Saved Fixes and Results
           </h2>
 
           <p className="mt-2 text-white/75">
-            This history is private to this device and stores items copied from FixMyGame, even if system clipboard copy fails.
+            This history stays on this device and saves fixes, results, and copied text from FixMyGame so you can come back to them later.
           </p>
         </div>
 
