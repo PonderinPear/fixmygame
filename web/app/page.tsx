@@ -1381,6 +1381,71 @@ const API_BASE_URL =
   throw new Error("debug-pro failed");
 }
 
+function getProgressState(params: {
+  loadingDesktopLog: boolean;
+  scanningLogs: boolean;
+  running: boolean;
+  applyingSafeFix: boolean;
+  undoingSafeFix: boolean;
+  runningFixPlan: boolean;
+}) {
+  if (params.loadingDesktopLog) {
+    return {
+      title: "Loading crash log",
+      description: "FixMyGame is reading your selected log file.",
+      steps: ["Choose file", "Read log", "Update screen"],
+      activeStep: 1,
+    };
+  }
+
+  if (params.scanningLogs) {
+    return {
+      title: "Scanning for logs",
+      description: "FixMyGame is searching for likely crash and log files.",
+      steps: ["Search folders", "Find likely logs", "Load best match"],
+      activeStep: 1,
+    };
+  }
+
+  if (params.running) {
+    return {
+      title: "Running diagnostic",
+      description: "FixMyGame is analyzing your crash log and building a repair plan.",
+      steps: ["Read crash", "Detect issues", "Build results"],
+      activeStep: 1,
+    };
+  }
+
+  if (params.applyingSafeFix) {
+    return {
+      title: "Applying safe fix",
+      description: "FixMyGame is making a safe change and creating a backup.",
+      steps: ["Review match", "Create backup", "Move file", "Save results"],
+      activeStep: 2,
+    };
+  }
+
+  if (params.undoingSafeFix) {
+    return {
+      title: "Undoing last fix",
+      description: "FixMyGame is restoring the last changed file.",
+      steps: ["Find backup", "Restore file", "Update results"],
+      activeStep: 1,
+    };
+  }
+
+  if (params.runningFixPlan) {
+    return {
+      title: "Opening tools and copying steps",
+      description: "FixMyGame is guiding you through the repair.",
+      steps: ["Open mods folder", "Open logs folder", "Copy fix steps"],
+      activeStep: 1,
+    };
+  }
+
+  return null;
+}
+
 export default function Page() {
   const [selectedGameKey, setSelectedGameKey] = useState("minecraft");
   const [gpuModel, setGpuModel] = useState("RTX 3060");
@@ -1440,6 +1505,25 @@ export default function Page() {
   mods?: string[];
   } | null>(null);
   const canRun = useMemo(() => isPro || remaining > 0, [isPro, remaining]);
+  const progressState = useMemo(
+  () =>
+    getProgressState({
+      loadingDesktopLog,
+      scanningLogs,
+      running,
+      applyingSafeFix,
+      undoingSafeFix,
+      runningFixPlan,
+    }),
+  [
+    loadingDesktopLog,
+    scanningLogs,
+    running,
+    applyingSafeFix,
+    undoingSafeFix,
+    runningFixPlan,
+  ]
+);
   const smartFixPath = useMemo(
     () => getSmartFixPath(detectedSignals, analysis, selectedGameKey),
     [detectedSignals, analysis, selectedGameKey]
@@ -3014,6 +3098,7 @@ if (value.trim().length > 40) {
 
         <div className="mt-6">
           <button
+  id="run-diagnostic-button"
   className={[
     "flex w-full items-center justify-center gap-3 rounded-xl px-5 py-4 text-lg font-semibold transition",
     canRun && !running ? "bg-blue-600 hover:bg-blue-500" : "bg-blue-900/60 text-white/60",
@@ -3138,7 +3223,7 @@ if (value.trim().length > 40) {
   </div>
 
   <div className="mt-3 text-xs text-white/55">
-    FixMyGame can guide you now and apply safe changes when available. More automatic repair options are coming in a future update.
+    FixMyGame can guide you through a fix or safely handle simple fixes for you.
   </div>
 </div>
 
@@ -3177,6 +3262,49 @@ if (value.trim().length > 40) {
           <div className="mt-2 text-sm text-white/70">{item.detail}</div>
         </div>
       ))}
+    </div>
+  </div>
+) : null}
+
+{progressState ? (
+  <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+      IN PROGRESS
+    </div>
+
+    <div className="mt-2 text-lg font-semibold text-white">
+      {progressState.title}
+    </div>
+
+    <div className="mt-1 text-sm text-white/75">
+      {progressState.description}
+    </div>
+
+    <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
+      <div className="h-2 w-1/2 animate-pulse rounded-full bg-cyan-400" />
+    </div>
+
+    <div className="mt-4 grid gap-2">
+      {progressState.steps.map((step, index) => {
+        const isActive = index === progressState.activeStep;
+        const isDone = index < progressState.activeStep;
+
+        return (
+          <div
+            key={step}
+            className={[
+              "rounded-xl px-3 py-2 text-sm",
+              isActive
+                ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
+                : isDone
+                ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
+                : "border border-white/10 bg-white/5 text-white/60",
+            ].join(" ")}
+          >
+            {isDone ? "✓" : isActive ? "•" : "○"} {step}
+          </div>
+        );
+      })}
     </div>
   </div>
 ) : null}
@@ -3689,7 +3817,7 @@ setTimeout(() => {
           disabled={runningFixPlan}
           className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {runningFixPlan ? "Running Safe Fixes..." : "Run Safe Actions"}
+          {runningFixPlan ? "Opening Tools and Copying Steps..." : "Guide Me Through It"}
         </button>
       </div>
     </div>
@@ -3716,7 +3844,10 @@ setTimeout(() => {
       <button
         onClick={() => {
           setShowFixFeedback(false);
-          showActionMessage("Nice — fix confirmed.", "fixAssistant");
+          showActionMessage(
+  "Nice — your game should be working now. You’re good to go.",
+  "fixAssistant"
+);
         }}
         className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 font-medium text-black hover:bg-emerald-400"
       >
@@ -3725,12 +3856,19 @@ setTimeout(() => {
 
       <button
         onClick={() => {
-          setShowFixFeedback(false);
-          showActionMessage(
-            "Got it — try another fix or re-run diagnostic.",
-            "fixAssistant"
-          );
-        }}
+  setShowFixFeedback(false);
+
+  showActionMessage(
+    "Got it — let’s try another approach. Launch your game again, then run a new diagnostic.",
+    "fixAssistant"
+  );
+
+  // scroll to diagnostic button
+  setTimeout(() => {
+    const el = document.getElementById("run-diagnostic-button");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 300);
+}}
         className="flex-1 rounded-xl bg-red-500/20 px-3 py-2 font-medium text-red-200 hover:bg-red-500/30"
       >
         ❌ Still crashing
@@ -3772,7 +3910,7 @@ setTimeout(() => {
         </button>
       </div>
 
-      <div className="mt-5 flex flex-wrap justify-end gap-3">
+      <div className="mt-1 flex flex-wrap justify-end gap-3">
         <button
           type="button"
           onClick={clearFixHistory}
