@@ -21,6 +21,7 @@
   "build": {
     "appId": "com.fixmygame.app",
     "productName": "FixMyGame",
+    "asar": true,
     "directories": {
       "output": "dist"
     },
@@ -44,9 +45,9 @@
         "to": "web-standalone/web/public"
       },
       {
-        "from": "../web/.env.local",
-        "to": "web-standalone/web/.env.local"
-      }
+    "from": "../web/.env.production",
+    "to": "web-standalone/web/.env.production"
+  }
     ],
     "win": {
       "target": "nsis"

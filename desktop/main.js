@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const dotenv = require("dotenv");
 const fs = require("fs");
-const { spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 const { scanLogsForGame, scanFolderRecursive } = require("./fileScanner");
 const isDev = !app.isPackaged;
 const os = require("os");
@@ -246,6 +246,68 @@ function getModsFolderForGame(gameKey) {
       }
       break;
 
+          case "fallout_new_vegas":
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "Fallout New Vegas", "Data")
+        );
+      }
+      break;
+
+    case "slime_rancher":
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "Slime Rancher", "Mods"),
+          path.join(steamCommon, "Slime Rancher", "SRML", "Mods")
+        );
+      }
+      break;
+
+    case "baldurs_gate_3":
+      candidates.push(
+        path.join(localAppData, "Larian Studios", "Baldur's Gate 3", "Mods")
+      );
+      break;
+
+    case "project_zomboid":
+      candidates.push(
+        path.join(home, "Zomboid", "mods")
+      );
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "ProjectZomboid", "mods"),
+          path.join(steamCommon, "ProjectZomboid", "Contents", "Java", "mods")
+        );
+      }
+      break;
+
+    case "witcher3":
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "The Witcher 3", "Mods")
+        );
+      }
+      break;
+
+    case "seven_days_to_die":
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "7 Days To Die", "Mods")
+        );
+      }
+      break;
+
+    case "xcom2":
+      candidates.push(
+        path.join(documents, "My Games", "XCOM2", "XComGame", "Mods")
+      );
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "XCOM 2", "XComGame", "Mods")
+        );
+      }
+      break;
+
     default:
       return null;
   }
@@ -336,6 +398,68 @@ function getLogsFolderForGame(gameKey) {
     case "cyberpunk2077":
       candidates.push(path.join(localAppData, "CD Projekt Red", "Cyberpunk 2077"));
       break;
+          case "fallout_new_vegas":
+      candidates.push(path.join(documents, "My Games", "FalloutNV"));
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "Fallout New Vegas")
+        );
+      }
+      break;
+
+    case "slime_rancher":
+      candidates.push(path.join(localAppData, "Monomi Park", "Slime Rancher"));
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "Slime Rancher")
+        );
+      }
+      break;
+
+    case "baldurs_gate_3":
+      candidates.push(path.join(localAppData, "Larian Studios", "Baldur's Gate 3"));
+      break;
+
+      case "project_zomboid":
+        candidates.push(
+        path.join(home, "Zomboid"),
+        path.join(home, "Zomboid", "Logs"),
+        path.join(home, "Zomboid", "console.txt")
+      );
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "ProjectZomboid")
+        );
+      }
+      break;
+
+    case "witcher3":
+      candidates.push(path.join(documents, "The Witcher 3"));
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "The Witcher 3")
+        );
+      }
+      break;
+
+    case "seven_days_to_die":
+      candidates.push(path.join(appData, "7DaysToDie", "logs"));
+      candidates.push(path.join(appData, "7DaysToDie"));
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "7 Days To Die")
+        );
+      }
+      break;
+
+    case "xcom2":
+      candidates.push(path.join(documents, "My Games", "XCOM2"));
+      for (const steamCommon of steamCommonPaths) {
+        candidates.push(
+          path.join(steamCommon, "XCOM 2")
+        );
+      }
+      break;
 
     default:
       return null;
@@ -348,7 +472,7 @@ function loadEnvFile() {
   try {
     const envPath = isDev
       ? path.join(__dirname, "../web/.env.local")
-      : path.join(process.resourcesPath, "web-standalone", "web", ".env.local");
+      : path.join(process.resourcesPath, "web-standalone", "web", ".env.production");
 
     if (fs.existsSync(envPath)) {
       dotenv.config({ path: envPath });
@@ -478,8 +602,45 @@ writeStartupLog("Loading app URL:", appUrl, "isDev:", isDev);
 mainWindow.loadURL(appUrl);
 }
 
+function detectSystemSpecsWindows() {
+  return new Promise((resolve) => {
+    const command =
+      'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion | ConvertTo-Json -Compress"';
+
+    exec(command, { timeout: 10000 }, (error, stdout) => {
+      if (error) {
+        resolve({
+          ok: false,
+          error: "Could not detect system specs.",
+        });
+        return;
+      }
+
+      try {
+        const raw = JSON.parse(String(stdout || "").trim());
+        const firstGpu = Array.isArray(raw) ? raw[0] : raw;
+
+        resolve({
+          ok: true,
+          gpuModel: firstGpu?.Name || "",
+          driverVersion: firstGpu?.DriverVersion || "",
+          graphicsApiMode: "Auto Detect",
+        });
+      } catch {
+        resolve({
+          ok: false,
+          error: "System specs were detected but could not be parsed.",
+        });
+      }
+    });
+  });
+}
+
 function getCandidateInstallPaths(gameKey) {
   const home = os.homedir();
+  const appData = process.env.APPDATA || "";
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const documents = path.join(home, "Documents");
 
   const candidates = {
     minecraft: getMinecraftInstallCandidates(),
@@ -494,6 +655,10 @@ function getCandidateInstallPaths(gameKey) {
       path.join(home, "Documents", "My Games", "Fallout4"),
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Fallout 4"),
     ],
+    fallout_new_vegas: [
+      path.join(home, "Documents", "My Games", "FalloutNV"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Fallout New Vegas"),
+    ],
     gmod: [
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "GarrysMod"),
     ],
@@ -501,9 +666,76 @@ function getCandidateInstallPaths(gameKey) {
       path.join(home, "AppData", "Roaming", "StardewValley"),
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Stardew Valley"),
     ],
+    slime_rancher: [
+      path.join(localAppData, "Monomi Park", "Slime Rancher"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Slime Rancher"),
+    ],
+    slime_rancher_2: [
+      path.join(localAppData, "Monomi Park", "SlimeRancher2"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Slime Rancher 2"),
+    ],
     cyberpunk2077: [
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Cyberpunk 2077"),
       path.join("C:\\", "Program Files", "Cyberpunk 2077"),
+    ],
+    starfield: [
+      path.join(home, "Documents", "My Games", "Starfield"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Starfield"),
+    ],
+    cities_skylines: [
+      path.join(localAppData, "Colossal Order", "Cities_Skylines"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Cities_Skylines"),
+    ],
+    rimworld: [
+      path.join(localAppData, "Low", "Ludeon Studios", "RimWorld by Ludeon Studios"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "RimWorld"),
+    ],
+    project_zomboid: [
+      path.join(home, "Zomboid"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "ProjectZomboid"),
+    ],
+    terraria: [
+      path.join(documents, "My Games", "Terraria"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Terraria"),
+    ],
+    kerbal_space_program: [
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Kerbal Space Program"),
+    ],
+    bannerlord: [
+      path.join(documents, "Mount and Blade II Bannerlord"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Mount & Blade II Bannerlord"),
+    ],
+        baldurs_gate_3: [
+      path.join(localAppData, "Larian Studios", "Baldur's Gate 3"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Baldurs Gate 3"),
+    ],
+    witcher3: [
+      path.join(documents, "The Witcher 3"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "The Witcher 3"),
+    ],
+    seven_days_to_die: [
+      path.join(appData, "7DaysToDie"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "7 Days To Die"),
+    ],
+    xcom2: [
+      path.join(documents, "My Games", "XCOM2"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "XCOM 2"),
+    ],
+    valheim: [
+      path.join(localAppData, "Low", "IronGate", "Valheim"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Valheim"),
+    ],
+    resident_evil_re: [
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "RESIDENT EVIL 4  BIOHAZARD RE4"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Resident Evil 2"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Resident Evil 3"),
+    ],
+    lethal_company: [
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Lethal Company"),
+    ],
+    palworld: [
+      path.join(localAppData, "Pal", "Saved"),
+      path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Palworld"),
     ],
   };
 
@@ -533,7 +765,7 @@ function timestampForFile() {
 }
 
 function getFixMyGameDataRoot() {
-  const root = path.join(app.getPath("userData"), "FixMyGame");
+  const root = path.join(app.getPath("documents"), "FixMyGame");
   ensureDir(root);
   return root;
 }
@@ -592,43 +824,221 @@ function getLatestManifestEntry() {
   return entries.length ? entries[0] : null;
 }
 
-function copyFileSafe(sourcePath, targetPath) {
+function copyPathSafe(sourcePath, targetPath) {
   ensureDir(path.dirname(targetPath));
+
+  const stats = fs.statSync(sourcePath);
+
+  if (stats.isDirectory()) {
+    fs.cpSync(sourcePath, targetPath, { recursive: true });
+    return;
+  }
+
   fs.copyFileSync(sourcePath, targetPath);
 }
 
-function moveFileSafe(sourcePath, targetPath) {
+function movePathSafe(sourcePath, targetPath) {
   ensureDir(path.dirname(targetPath));
   fs.renameSync(sourcePath, targetPath);
 }
 
-function resolveModsFolderFromInstallPath(installPath) {
+function resolveModsFolderFromInstallPath(gameKey, installPath) {
   if (!installPath) return null;
-  return path.join(installPath, "mods");
+
+  const detectedByGame = getModsFolderForGame(gameKey);
+  if (detectedByGame && fs.existsSync(detectedByGame)) {
+    return detectedByGame;
+  }
+
+  const fallbackCandidates = [
+    path.join(installPath, "mods"),
+    path.join(installPath, "Mods"),
+    path.join(installPath, "Data"),
+    path.join(installPath, "archive", "pc", "mod"),
+    path.join(installPath, "garrysmod", "addons"),
+  ];
+
+  return fallbackCandidates.find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-function findMatchingModFile(modsFolder, suspectNames = []) {
-  if (!modsFolder || !fs.existsSync(modsFolder)) return null;
+function normalizeNameForMatch(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[_\-\s]+/g, "")
+    .trim();
+}
 
-  const files = fs.readdirSync(modsFolder);
-  const loweredSuspects = suspectNames
-    .map((name) => String(name || "").toLowerCase().trim())
+function normalizeSuspectNames(suspectNames = []) {
+  return suspectNames
+    .map((name) => normalizeNameForMatch(name))
     .filter(Boolean);
+}
 
-  for (const file of files) {
-    const lowerFile = file.toLowerCase();
-    const isJar = lowerFile.endsWith(".jar");
-    if (!isJar) continue;
+function scoreNameMatch(candidateName, loweredSuspects) {
+  const normalizedCandidate = normalizeNameForMatch(candidateName);
 
-    for (const suspect of loweredSuspects) {
-      if (lowerFile.includes(suspect)) {
-        return path.join(modsFolder, file);
+  let bestScore = 0;
+  let matchedSuspect = "";
+
+  for (const suspect of loweredSuspects) {
+    if (!suspect) continue;
+
+    if (normalizedCandidate === suspect) {
+      return { score: 100, matchedSuspect: suspect };
+    }
+
+    if (normalizedCandidate.includes(suspect)) {
+      const score = suspect.length >= 8 ? 90 : 75;
+      if (score > bestScore) {
+        bestScore = score;
+        matchedSuspect = suspect;
+      }
+    }
+
+    if (suspect.includes(normalizedCandidate) && normalizedCandidate.length >= 4) {
+      const score = 60;
+      if (score > bestScore) {
+        bestScore = score;
+        matchedSuspect = suspect;
       }
     }
   }
 
-  return null;
+  return { score: bestScore, matchedSuspect };
 }
+
+function isClearlyInvalidLooseModFile(fileName) {
+  const lower = String(fileName || "").toLowerCase();
+
+  return (
+    lower.endsWith(".txt") ||
+    lower.endsWith(".zip") ||
+    lower.endsWith(".rar") ||
+    lower.endsWith(".7z") ||
+    lower.endsWith(".bak") ||
+    lower.endsWith(".old") ||
+    lower.endsWith(".disabled")
+  );
+}
+
+function findSafeFixCandidate(modsFolder, suspectNames = []) {
+  if (!modsFolder || !fs.existsSync(modsFolder)) return null;
+
+  const loweredSuspects = normalizeSuspectNames(suspectNames);
+  const primarySuspect = loweredSuspects[0] || "";
+  const entries = fs.readdirSync(modsFolder, { withFileTypes: true });
+
+  const allowedExtensions = [".jar", ".pak", ".package", ".ts4script", ".esp", ".esm", ".esl", ".dll"];
+  const candidates = [];
+
+  for (const entry of entries) {
+    const entryName = entry.name;
+    const entryPath = path.join(modsFolder, entryName);
+    const { score, matchedSuspect } = scoreNameMatch(entryName, loweredSuspects);
+    const normalizedEntryName = normalizeNameForMatch(entryName);
+
+    if (!score) continue;
+
+    if (entry.isDirectory()) {
+  const innerEntries = safeReadDir(entryPath);
+  const isEmptyFolder = innerEntries.length === 0;
+
+  let finalScore = isEmptyFolder ? score + 30 : score + 10;
+
+  if (primarySuspect && normalizedEntryName === primarySuspect) {
+    finalScore += 50;
+  }
+
+  candidates.push({
+    matchedPath: entryPath,
+    matchedName: entryName,
+    matchedSuspect: matchedSuspect || entryName,
+    itemType: "folder",
+    candidateKind: isEmptyFolder ? "empty_folder" : "mod_folder",
+    score: finalScore,
+  });
+
+  continue;
+}
+
+   if (entry.isFile()) {
+  const lowerName = entryName.toLowerCase();
+  const isAllowedFile = allowedExtensions.some((ext) => lowerName.endsWith(ext));
+  const isInvalidLooseFile = isClearlyInvalidLooseModFile(entryName);
+
+  let finalScore = 0;
+
+  if (isInvalidLooseFile) {
+    finalScore = score + 25;
+    if (primarySuspect && normalizedEntryName === primarySuspect) {
+      finalScore += 50;
+    }
+
+    candidates.push({
+      matchedPath: entryPath,
+      matchedName: entryName,
+      matchedSuspect: matchedSuspect || entryName,
+      itemType: "file",
+      candidateKind: "invalid_loose_file",
+      score: finalScore,
+    });
+    continue;
+  }
+
+  if (isAllowedFile) {
+    finalScore = score + 10;
+    if (primarySuspect && normalizedEntryName === primarySuspect) {
+      finalScore += 50;
+    }
+
+    candidates.push({
+      matchedPath: entryPath,
+      matchedName: entryName,
+      matchedSuspect: matchedSuspect || entryName,
+      itemType: "file",
+      candidateKind: "mod_file",
+      score: finalScore,
+    });
+  }
+}
+  }
+
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
+}
+
+ipcMain.handle("close-app", async () => {
+  try {
+    app.quit();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to close app.",
+    };
+  }
+});
+
+ipcMain.handle("detect-system-specs", async () => {
+  try {
+    if (process.platform === "win32") {
+      return await detectSystemSpecsWindows();
+    }
+
+    return {
+      ok: false,
+      error: "Auto-fill system specs is currently supported on Windows only.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Failed to detect system specs.",
+    };
+  }
+});
 
 ipcMain.handle("detect-game-install", async (_event, gameKey) => {
   try {
@@ -851,7 +1261,7 @@ ipcMain.handle("apply-safe-fix", async (_event, payload) => {
       };
     }
 
-    const modsFolder = resolveModsFolderFromInstallPath(installPath);
+    const modsFolder = resolveModsFolderFromInstallPath(gameKey, installPath);
     if (!modsFolder || !fs.existsSync(modsFolder)) {
       return {
         ok: false,
@@ -859,46 +1269,65 @@ ipcMain.handle("apply-safe-fix", async (_event, payload) => {
       };
     }
 
-    const matchedModPath = findMatchingModFile(modsFolder, suspectMods);
-    if (!matchedModPath) {
-      return {
-        ok: false,
-        error: "No matching mod file was found to move.",
-      };
-    }
+const candidate = findSafeFixCandidate(modsFolder, suspectMods);
+if (!candidate) {
+  return {
+    ok: false,
+    error: "No matching safe-fix candidate was found in the Mods folder.",
+  };
+}
 
-    const originalFileName = path.basename(matchedModPath);
-    const stamp = timestampForFile();
-    const safeGameKey = safeFileName(gameKey || "game");
-    const backupFolder = ensureDir(path.join(getBackupRoot(), safeGameKey, stamp));
-    const quarantineFolder = ensureDir(path.join(getQuarantineRoot(), safeGameKey, stamp));
+const {
+  matchedPath,
+  matchedName,
+  matchedSuspect,
+  itemType,
+  candidateKind,
+} = candidate;
 
-    const backupPath = path.join(backupFolder, originalFileName);
-    const quarantinePath = path.join(quarantineFolder, originalFileName);
+const originalFileName = path.basename(matchedPath);
+const stamp = timestampForFile();
+const safeGameKey = safeFileName(gameKey || "game");
+const backupFolder = ensureDir(path.join(getBackupRoot(), safeGameKey, stamp));
+const quarantineFolder = ensureDir(path.join(getQuarantineRoot(), safeGameKey, stamp));
 
-    copyFileSafe(matchedModPath, backupPath);
-    moveFileSafe(matchedModPath, quarantinePath);
+const backupPath = path.join(backupFolder, originalFileName);
+const quarantinePath = path.join(quarantineFolder, originalFileName);
 
-    const manifestEntry = appendManifestEntry({
-      id: `${safeGameKey}-${stamp}-${originalFileName}`,
-      createdAt: new Date().toISOString(),
-      gameKey: gameKey || "unknown",
-      actionLabel,
-      suspectMods,
-      originalPath: matchedModPath,
-      backupPath,
-      quarantinePath,
-      fileName: originalFileName,
-      status: "applied",
-    });
+copyPathSafe(matchedPath, backupPath);
+movePathSafe(matchedPath, quarantinePath);
+
+const manifestEntry = appendManifestEntry({
+  id: `${safeGameKey}-${stamp}-${originalFileName}`,
+  createdAt: new Date().toISOString(),
+  gameKey: gameKey || "unknown",
+  actionLabel,
+  suspectMods,
+  originalPath: matchedPath,
+  backupPath,
+  quarantinePath,
+  fileName: originalFileName,
+  matchedName,
+  matchedSuspect,
+  installPath,
+  modsFolder,
+  itemType,
+  candidateKind,
+  status: "applied",
+});
 
     return {
-      ok: true,
-      entry: manifestEntry,
-      movedFile: originalFileName,
-      backupPath,
-      quarantinePath,
-    };
+  ok: true,
+  entry: manifestEntry,
+  movedFile: originalFileName,
+  matchedName,
+  matchedSuspect,
+  itemType,
+  candidateKind,
+  originalPath: matchedPath,
+  backupPath,
+  quarantinePath,
+};
   } catch (error) {
     return {
       ok: false,
@@ -926,7 +1355,7 @@ ipcMain.handle("undo-last-fix", async () => {
     }
 
     ensureDir(path.dirname(latest.originalPath));
-    moveFileSafe(latest.quarantinePath, latest.originalPath);
+    movePathSafe(latest.quarantinePath, latest.originalPath);
     removeManifestEntry(latest.id);
 
     return {

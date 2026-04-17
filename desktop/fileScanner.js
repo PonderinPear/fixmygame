@@ -169,6 +169,205 @@ function getRootsForGame(gameKey) {
     );
   }
   break;
+      case "fallout_new_vegas":
+      roots.push(path.join(documents, "My Games", "FalloutNV"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Fallout New Vegas"),
+          path.join(steamCommon, "Fallout New Vegas", "Data"),
+          path.join(steamCommon, "Fallout New Vegas", "NVSE")
+        );
+      }
+      break;
+
+    case "slime_rancher":
+      roots.push(path.join(localAppData, "Monomi Park", "Slime Rancher"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Slime Rancher"),
+          path.join(steamCommon, "Slime Rancher", "Mods"),
+          path.join(steamCommon, "Slime Rancher", "SRML", "Mods")
+        );
+      }
+      break;
+
+    case "slime_rancher_2":
+      roots.push(path.join(localAppData, "Monomi Park", "SlimeRancher2"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Slime Rancher 2"),
+          path.join(steamCommon, "Slime Rancher 2", "Mods"),
+          path.join(steamCommon, "Slime Rancher 2", "BepInEx"),
+          path.join(steamCommon, "Slime Rancher 2", "BepInEx", "plugins")
+        );
+      }
+      break;
+
+    case "baldurs_gate_3":
+      roots.push(path.join(localAppData, "Larian Studios", "Baldur's Gate 3"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Baldurs Gate 3"),
+          path.join(steamCommon, "Baldurs Gate 3", "Data"),
+          path.join(steamCommon, "Baldurs Gate 3", "bin")
+        );
+      }
+      break;
+
+    case "witcher3":
+      roots.push(path.join(documents, "The Witcher 3"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "The Witcher 3"),
+          path.join(steamCommon, "The Witcher 3", "Mods")
+        );
+      }
+      break;
+
+    case "seven_days_to_die":
+      roots.push(path.join(appData, "7DaysToDie"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "7 Days To Die"),
+          path.join(steamCommon, "7 Days To Die", "Mods")
+        );
+      }
+      break;
+
+    case "xcom2":
+      roots.push(path.join(documents, "My Games", "XCOM2"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "XCOM 2"),
+          path.join(steamCommon, "XCOM 2", "XComGame"),
+          path.join(steamCommon, "XCOM 2", "XComGame", "Mods")
+        );
+      }
+      break;
+
+    case "starfield":
+      roots.push(path.join(documents, "My Games", "Starfield"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Starfield"),
+          path.join(steamCommon, "Starfield", "Data")
+        );
+      }
+      break;
+
+    case "cities_skylines":
+      roots.push(path.join(localAppData, "Colossal Order", "Cities_Skylines"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Cities_Skylines")
+        );
+      }
+      break;
+
+    case "rimworld":
+      roots.push(path.join(localAppData, "Low", "Ludeon Studios", "RimWorld by Ludeon Studios"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "RimWorld"),
+          path.join(steamCommon, "RimWorld", "Mods")
+        );
+      }
+      break;
+
+    case "project_zomboid":
+      roots.push(path.join(home, "Zomboid"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "ProjectZomboid")
+        );
+      }
+      break;
+
+    case "terraria":
+      roots.push(path.join(documents, "My Games", "Terraria"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Terraria"),
+          path.join(steamCommon, "Terraria", "tModLoader"),
+          path.join(steamCommon, "Terraria", "tModLoader", "Mods")
+        );
+      }
+      break;
+
+    case "kerbal_space_program":
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Kerbal Space Program"),
+          path.join(steamCommon, "Kerbal Space Program", "GameData")
+        );
+      }
+      break;
+
+    case "bannerlord":
+      roots.push(path.join(documents, "Mount and Blade II Bannerlord"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Mount & Blade II Bannerlord"),
+          path.join(steamCommon, "Mount & Blade II Bannerlord", "Modules")
+        );
+      }
+      break;
+
+    case "valheim":
+      roots.push(path.join(localAppData, "Low", "IronGate", "Valheim"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Valheim"),
+          path.join(steamCommon, "Valheim", "BepInEx"),
+          path.join(steamCommon, "Valheim", "BepInEx", "plugins")
+        );
+      }
+      break;
+
+    case "resident_evil_re":
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "RESIDENT EVIL 4  BIOHAZARD RE4"),
+          path.join(steamCommon, "Resident Evil 2"),
+          path.join(steamCommon, "Resident Evil 3"),
+          path.join(steamCommon, "RESIDENT EVIL 4  BIOHAZARD RE4", "Mods"),
+          path.join(steamCommon, "Resident Evil 2", "Mods"),
+          path.join(steamCommon, "Resident Evil 3", "Mods")
+        );
+      }
+      break;
+
+    case "lethal_company":
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Lethal Company"),
+          path.join(steamCommon, "Lethal Company", "BepInEx"),
+          path.join(steamCommon, "Lethal Company", "BepInEx", "plugins")
+        );
+      }
+      break;
+
+    case "palworld":
+      roots.push(path.join(localAppData, "Pal", "Saved"));
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(
+          path.join(steamCommon, "Palworld"),
+          path.join(steamCommon, "Palworld", "Pal"),
+          path.join(steamCommon, "Palworld", "Pal", "Saved")
+        );
+      }
+      break;
+
+    case "custom":
+      roots.push(
+        documents,
+        appData,
+        localAppData
+      );
+      for (const steamCommon of steamCommonPaths) {
+        roots.push(steamCommon);
+      }
+      break;
 
     default:
       break;
@@ -219,43 +418,72 @@ function isUsefulLogForGame(gameKey, fileName, fullPath) {
   const lowerPath = fullPath.toLowerCase();
 
   if (gameKey === "minecraft") {
-  if (lowerPath.includes("\\telemetry\\") || lowerPath.includes("/telemetry/")) {
-    return false;
-  }
+    if (lowerPath.includes("\\telemetry\\") || lowerPath.includes("/telemetry/")) {
+      return false;
+    }
 
-  if (
-    lowerName === "options.txt" ||
-    lowerName === "usercache.json" ||
-    lowerName === "realms_persistence.json" ||
-    lowerName === "minecraftinstance.json" ||
-    lowerName === "launcher_profiles.json" ||
-    lowerName === "launcher_settings.json" ||
-    lowerName === "version_manifest_v2.json" ||
-    lowerName === "jre_manifest.json"
-  ) {
-    return false;
-  }
+    if (
+      lowerName === "options.txt" ||
+      lowerName === "usercache.json" ||
+      lowerName === "realms_persistence.json" ||
+      lowerName === "minecraftinstance.json" ||
+      lowerName === "launcher_profiles.json" ||
+      lowerName === "launcher_settings.json" ||
+      lowerName === "version_manifest_v2.json" ||
+      lowerName === "jre_manifest.json"
+    ) {
+      return false;
+    }
 
-  if (lowerPath.includes("essential") && lowerName.startsWith("connection-")) {
-    return false;
-  }
+    if (lowerPath.includes("essential") && lowerName.startsWith("connection-")) {
+      return false;
+    }
 
     return (
-    lowerName === "latest.log" ||
-    lowerName === "debug.log" ||
-    lowerName === "logoutput.log" ||
-    lowerName.startsWith("crash-") ||
-    lowerName.startsWith("hs_err") ||
-    lowerName.startsWith("launcher_log") ||
-    (lowerPath.includes("crash-reports") && lowerName.endsWith(".txt")) ||
-    (lowerPath.includes("logs") && lowerName.endsWith(".log"))
-  );
-}
+      lowerName === "latest.log" ||
+      lowerName === "debug.log" ||
+      lowerName === "logoutput.log" ||
+      lowerName.startsWith("crash-") ||
+      lowerName.startsWith("hs_err") ||
+      lowerName.startsWith("launcher_log") ||
+      (lowerPath.includes("crash-reports") && lowerName.endsWith(".txt")) ||
+      (lowerPath.includes("logs") && lowerName.endsWith(".log"))
+    );
+  }
+
+  if (gameKey === "stardew_valley") {
+    if (
+      lowerName === "smapi-latest.txt" ||
+      lowerName === "smapi-crash.txt" ||
+      lowerName === "latest.txt"
+    ) {
+      return true;
+    }
+
+    if (
+      lowerPath.includes("stardewvalley\\errorlogs") ||
+      lowerPath.includes("stardewvalley/errorlogs")
+    ) {
+      return lowerName.endsWith(".txt") || lowerName.endsWith(".log");
+    }
+
+    if (lowerName.endsWith(".json")) {
+      return false;
+    }
+
+    if (
+      lowerPath.includes("\\mods\\") ||
+      lowerPath.includes("/mods/")
+    ) {
+      return false;
+    }
+
+    return lowerName.includes("smapi") && (lowerName.endsWith(".txt") || lowerName.endsWith(".log"));
+  }
 
   return (
     lowerName.endsWith(".log") ||
     lowerName.endsWith(".txt") ||
-    lowerName.endsWith(".json") ||
     lowerName.startsWith("hs_err") ||
     lowerName.includes("crash") ||
     lowerName.includes("error") ||
@@ -324,6 +552,10 @@ function collectLogsFromDirectory(dir, gameKey = null) {
       stats = fs.statSync(fullPath);
     } catch {
       stats = undefined;
+    }
+
+        if (stats && typeof stats.size === "number" && stats.size <= 0) {
+      continue;
     }
 
     foundLogs.push({
@@ -403,6 +635,10 @@ function scanFolderRecursive(folderPath, gameKey = "minecraft", depth = 0, maxDe
       stats = fs.statSync(fullPath);
     } catch {
       stats = undefined;
+    }
+
+        if (stats && typeof stats.size === "number" && stats.size <= 0) {
+      continue;
     }
 
     results.push({

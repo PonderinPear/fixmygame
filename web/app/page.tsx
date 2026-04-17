@@ -45,6 +45,17 @@ detectGameInstall?: (gameKey: string) => Promise<{
   path?: string | null;
   error?: string;
 }>;
+detectSystemSpecs?: () => Promise<{
+  ok?: boolean;
+  gpuModel?: string;
+  driverVersion?: string;
+  graphicsApiMode?: string;
+  error?: string;
+}>;
+closeApp?: () => Promise<{
+  ok?: boolean;
+  error?: string;
+}>;
 applySafeFix?: (payload: {
   gameKey: string;
   installPath: string;
@@ -54,6 +65,11 @@ applySafeFix?: (payload: {
   ok?: boolean;
   error?: string;
   movedFile?: string;
+  matchedName?: string;
+  matchedSuspect?: string;
+  itemType?: "file" | "folder";
+  candidateKind?: "empty_folder" | "invalid_loose_file" | "mod_file" | "mod_folder";
+  originalPath?: string;
   backupPath?: string;
   quarantinePath?: string;
   entry?: {
@@ -66,6 +82,12 @@ applySafeFix?: (payload: {
     backupPath: string;
     quarantinePath: string;
     fileName: string;
+    matchedName?: string;
+    matchedSuspect?: string;
+    installPath?: string;
+    modsFolder?: string;
+    itemType?: string;
+    candidateKind?: string;
     status: string;
   };
 }>;
@@ -107,16 +129,22 @@ type AnalyzeResponse = {
       javaVersion?: string;
       suspectedMods?: string[];
       likelyCategory?: string;
+      advisoryLevel?: "none" | "advisory" | "important";
+      advisoryTitle?: string;
+      advisoryMessage?: string;
     };
   };
   detectedSignals?: {
-    errorType?: string;
-    loader?: string;
-    gameVersion?: string;
-    javaVersion?: string;
-    suspectedMods?: string[];
-    likelyCategory?: string;
-  };
+  errorType?: string;
+  loader?: string;
+  gameVersion?: string;
+  javaVersion?: string;
+  suspectedMods?: string[];
+  likelyCategory?: string;
+  advisoryLevel?: "none" | "advisory" | "important";
+  advisoryTitle?: string;
+  advisoryMessage?: string;
+};
 };
 
 type CheckoutResponse = {
@@ -150,9 +178,23 @@ type FixHistoryItem = {
   createdAt: number;
   gameKey: string;
   gameTitle: string;
-  type: "quick_fix" | "full_result" | "suspected_mods" | "fix_plan";
+  type:
+    | "quick_fix"
+    | "full_result"
+    | "suspected_mods"
+    | "fix_plan"
+    | "diagnostic_run";
   title: string;
   text: string;
+  analysisSummary?: {
+    issue?: string;
+    quickFixFirst?: string;
+    mostLikelyCause?: string;
+    needMoreInfo?: string;
+    likelyCategory?: string;
+    suspectedMods?: string[];
+    previousRelevantLog?: string;
+  };
 };
 
 type ApiErrorShape = {
@@ -165,6 +207,9 @@ function isApiErrorShape(x: unknown): x is ApiErrorShape {
 }
 
 const FIX_HISTORY_STORAGE_KEY = "fmg_fix_history";
+const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
+const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
+const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
 function loadFixHistory(): FixHistoryItem[] {
   if (typeof window === "undefined") return [];
@@ -317,7 +362,7 @@ function getFixPlan(
         ? "Mod conflict repair preview"
         : "Repair preview",
     description:
-      "FixMyGame will only perform safe helper actions for now. Direct file-changing repairs like disabling or moving mods will come in a later update with backup and rollback support.",
+  "FixMyGame can now perform one supported Safe Fix flow: backing up and quarantining a likely broken mod or folder. More advanced automatic repairs will come later.",
     actions,
   };
 }
@@ -334,17 +379,206 @@ function getRiskClasses(risk: FixAction["risk"]) {
   return "border-red-400/20 bg-red-400/10 text-red-200";
 }
 
+function detectModManagerFromPath(inputPath?: string) {
+  const rawPath = String(inputPath || "");
+  const lower = rawPath.toLowerCase();
+
+  if (!rawPath.trim()) return null;
+
+  if (lower.includes("\\curseforge\\minecraft\\instances\\")) {
+    const profileName =
+      rawPath.split("Instances\\")[1]?.split("\\")[0] ||
+      rawPath.split("instances\\")[1]?.split("\\")[0] ||
+      null;
+
+    return {
+      manager: "CurseForge",
+      profileName,
+    };
+  }
+
+  if (lower.includes("\\prismlauncher\\instances\\")) {
+    const profileName =
+      rawPath.split("instances\\")[1]?.split("\\")[0] || null;
+
+    return {
+      manager: "Prism Launcher",
+      profileName,
+    };
+  }
+
+  if (lower.includes("\\modrinthapp\\profiles\\")) {
+    const profileName =
+      rawPath.split("profiles\\")[1]?.split("\\")[0] || null;
+
+    return {
+      manager: "Modrinth",
+      profileName,
+    };
+  }
+
+  if (lower.includes("\\multimc\\instances\\")) {
+    const profileName =
+      rawPath.split("instances\\")[1]?.split("\\")[0] || null;
+
+    return {
+      manager: "MultiMC",
+      profileName,
+    };
+  }
+
+  return null;
+}
+
 function getSmartFixPath(
   signals: AnalyzeResponse["detectedSignals"] | null,
   analysis: AnalyzeResponse["analysis"] | null,
-  gameKey: string
+  gameKey: string,
+  currentLogPath?: string,
+  crashLog?: string
 ) {
   const category = signals?.likelyCategory ?? "unknown";
   const loader = signals?.loader ?? "";
   const javaVersion = signals?.javaVersion ?? "";
   const mods = signals?.suspectedMods ?? [];
 
+  const lowerLogPath = String(currentLogPath || "").toLowerCase();
+
+  const stardewModsPath =
+  lowerLogPath.includes("\\stardewvalley\\errorlogs")
+    ? "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Stardew Valley\\Mods"
+    : "";
+
+  const managerInfo = detectModManagerFromPath(currentLogPath);
+
+  const lowerCrashLog = String(crashLog || "").toLowerCase();
+
+const stardewSkippedEmptyFolderMatch =
+  crashLog?.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's an empty folder\./i) ||
+  crashLog?.match(/TRACE SMAPI\]\s+([A-Za-z0-9 _.'\-\[\]]+)\s+\(from Mods\\[^)]*\)\.\.\.[\s\S]*?Failed:\s+it's an empty folder\./i);
+
+const stardewSkippedEmptyFolderMod =
+  stardewSkippedEmptyFolderMatch?.[1]?.trim() || null;
+  const stardewBrokenFolderPath =
+  stardewModsPath && stardewSkippedEmptyFolderMod
+    ? `${stardewModsPath}\\${stardewSkippedEmptyFolderMod}`
+    : "";
   // GAME-SPECIFIC HANDLING FIRST
+
+  if (gameKey === "stardew_valley") {
+  const leadMod = mods[0] || "the installer folder";
+
+  if (
+  lowerCrashLog.includes("skipped mods") &&
+  lowerCrashLog.includes("empty folder")
+) {
+  const badFolder = stardewSkippedEmptyFolderMod || mods[0] || "the empty mod folder";
+
+  return {
+    title: "Unused or invalid Stardew mod folder found",
+    bullets: [
+      `${badFolder} was skipped by SMAPI because it is an empty folder.`,
+      stardewBrokenFolderPath
+        ? `Remove this folder: ${stardewBrokenFolderPath}`
+        : `Remove the empty folder named ${badFolder} from your Stardew Valley Mods folder.`,
+      "This is not a game crash, but cleaning it up will make the log clearer.",
+    ],
+  };
+}
+
+    if (isAdvisoryCategory(category)) {
+  return {
+    title: analysis?.issue || "Advisory issue found",
+    bullets: [
+      analysis?.quickFixFirst || "A non-fatal issue was found in this log.",
+      analysis?.mostLikelyCause || "The game may still launch, but this warning should be cleaned up.",
+      ...(analysis?.recommendedFixSteps?.length
+        ? analysis.recommendedFixSteps
+        : ["Review the warning and apply the suggested cleanup."]),
+    ],
+  };
+}
+
+if (category === "no_clear_issue_found") {
+  return {
+    title: "No clear issue found in this log",
+      bullets: [
+        "This log looks normal and does not show an active crash or broken mod.",
+        "Launch Stardew Valley again and test normally.",
+        "If the issue returns, load the newest crash or error log created after the problem happens.",
+        "If the problem is intermittent, re-run FixMyGame immediately after it appears.",
+      ],
+    };
+  }
+
+  if (
+    analysis?.quickFixFirst?.toLowerCase().includes("smapi") ||
+    analysis?.issue?.toLowerCase().includes("installer folder") ||
+    analysis?.issue?.toLowerCase().includes("non-mod installer")
+  ) {
+    const bullets: string[] = [];
+
+    if (managerInfo?.manager && managerInfo?.profileName) {
+      bullets.push(
+        `Option A — Fix in ${managerInfo.manager}: Open ${managerInfo.manager}, open "${managerInfo.profileName}", find "${leadMod}", then disable or remove it there.`
+      );
+    }
+
+    bullets.push(
+      `Fix in Mods Folder: Delete the "${leadMod}" folder from your Mods folder.`
+    );
+
+    bullets.push(
+      stardewModsPath
+        ? `Mods folder: ${stardewModsPath}`
+        : "Open your Stardew Valley Mods folder and locate the installer folder."
+    );
+
+    bullets.push(
+      "Restart Stardew Valley and check whether your mods load normally."
+    );
+
+    bullets.push(
+      "If the issue continues, run another diagnostic after reopening the game."
+    );
+
+    return {
+      title: "Installer folder found in Mods",
+      bullets,
+    };
+  }
+
+  const fallbackBullets: string[] = [];
+
+  if (managerInfo?.manager && managerInfo?.profileName && mods.length > 0) {
+    fallbackBullets.push(
+      `Option A — Fix in ${managerInfo.manager}: Open ${managerInfo.manager}, open "${managerInfo.profileName}", find "${mods[0]}", and disable it there first.`
+    );
+  }
+
+  fallbackBullets.push(
+    mods.length > 0
+      ? `Fix in Mods Folder: Start by removing or disabling ${mods[0]}.`
+      : "Fix in Mods Folder: Start by removing the most recently added mod."
+  );
+
+  fallbackBullets.push(
+    "Make sure each mod is properly installed (not just extracted or incomplete files)."
+  );
+
+  fallbackBullets.push(
+    "Restart Stardew Valley and check whether the issue is gone."
+  );
+
+  fallbackBullets.push(
+    "If the issue continues, re-run FixMyGame after the next launch."
+  );
+
+  return {
+    title: "Mod conflict likely",
+    bullets: fallbackBullets,
+  };
+}
 
 if (gameKey === "sims4") {
   if (category === "gpu_driver_issue") {
@@ -454,6 +688,189 @@ if (gameKey === "fallout4") {
   };
 }
 
+if (gameKey === "cyberpunk2077") {
+  if (category === "missing_dependency") {
+  return {
+    title: "Missing Dependency (Cyberpunk 2077)",
+    bullets: [
+      mods.length > 0
+        ? `${mods[0]} is missing a required dependency (like Codeware or ArchiveXL).`
+        : "A required mod dependency is missing.",
+      "Install the missing dependency (Codeware, ArchiveXL, RED4ext, or CET depending on the mod).",
+      "Make sure all framework mods are up to date and match your Cyberpunk version.",
+      "Restart the game after installing the dependency.",
+    ],
+  };
+}
+  if (isAdvisoryCategory(category)) {
+  return {
+    title: analysis?.issue || "Advisory issue found",
+    bullets: [
+      analysis?.quickFixFirst || "A non-fatal issue was found in this log.",
+      analysis?.mostLikelyCause || "The game may still launch, but this warning should be cleaned up.",
+      ...(analysis?.recommendedFixSteps?.length
+        ? analysis.recommendedFixSteps
+        : ["Review the warning and apply the suggested cleanup."]),
+    ],
+  };
+}
+
+if (category === "no_clear_issue_found") {
+  return {
+    title: "No clear issue found in this log",
+      bullets: [
+        "This Cyberpunk 2077 log looks normal and does not show an active crash or broken framework.",
+        "Launch the game again and test normally.",
+        "If the issue returns, load the newest crash or error log created after the problem happens.",
+        "If the issue is intermittent, re-run FixMyGame immediately after it appears.",
+      ],
+    };
+  }
+
+  if (category === "gpu_driver_issue") {
+    return {
+      title: "Graphics / Driver Issue (Cyberpunk 2077)",
+      bullets: [
+        "Disable graphics-heavy mods, overlays, and reshade-like tools first.",
+        "Update your GPU driver to the latest stable version.",
+        "Retest without RED4ext, CET-dependent visual tweaks, or heavy archive mods.",
+        "Re-enable visual mods one at a time after stability returns.",
+      ],
+    };
+  }
+
+  return {
+    title: "Cyberpunk Mod / Framework Issue",
+    bullets: [
+      "Update RED4ext, redscript, Cyber Engine Tweaks, and ArchiveXL first.",
+      mods.length > 0
+        ? `Disable or remove ${mods[0]} first, then retest.`
+        : "Disable the most recently added Cyberpunk mod first, then retest.",
+      "Make sure all core frameworks match your current Cyberpunk version.",
+      "Retest after each single change so you can isolate the unstable mod or framework.",
+    ],
+  };
+}
+
+if (gameKey === "baldurs_gate_3") {
+  if (isAdvisoryCategory(category)) {
+  return {
+    title: analysis?.issue || "Advisory issue found",
+    bullets: [
+      analysis?.quickFixFirst || "A non-fatal issue was found in this log.",
+      analysis?.mostLikelyCause || "The game may still launch, but this warning should be cleaned up.",
+      ...(analysis?.recommendedFixSteps?.length
+        ? analysis.recommendedFixSteps
+        : ["Review the warning and apply the suggested cleanup."]),
+    ],
+  };
+}
+
+if (category === "no_clear_issue_found") {
+  return {
+    title: "No clear issue found in this log",
+      bullets: [
+        "This Baldur's Gate 3 log looks normal and does not show an active mod or Script Extender failure.",
+        "Launch the game again and test normally.",
+        "If the issue returns, load the newest crash or error log created after the problem happens.",
+        "If the issue is intermittent, re-run FixMyGame immediately after it appears.",
+      ],
+    };
+  }
+
+  return {
+    title: "BG3 Mod / Script Extender Issue",
+    bullets: [
+      "Update Baldur's Gate 3 Script Extender and BG3 Mod Manager first.",
+      mods.length > 0
+        ? `Disable or remove ${mods[0]} first, then retest.`
+        : "Disable the most recently added BG3 mod first, then retest.",
+      "Make sure your .pak mods and ModSettings file match your current game version.",
+      "If the issue continues, test with Script Extender only, then re-enable mods one at a time.",
+    ],
+  };
+}
+
+if (gameKey === "project_zomboid") {
+  if (isAdvisoryCategory(category)) {
+  return {
+    title: analysis?.issue || "Advisory issue found",
+    bullets: [
+      analysis?.quickFixFirst || "A non-fatal issue was found in this log.",
+      analysis?.mostLikelyCause || "The game may still launch, but this warning should be cleaned up.",
+      ...(analysis?.recommendedFixSteps?.length
+        ? analysis.recommendedFixSteps
+        : ["Review the warning and apply the suggested cleanup."]),
+    ],
+  };
+}
+
+if (category === "no_clear_issue_found") {
+  return {
+    title: "No clear issue found in this log",
+      bullets: [
+        "This Project Zomboid log looks normal and does not show an active Lua or workshop mod failure.",
+        "Launch the game again and test normally.",
+        "If the issue returns, load the newest crash or error log created after the problem happens.",
+        "If the issue is intermittent, re-run FixMyGame immediately after it appears.",
+      ],
+    };
+  }
+
+  if (category === "missing_dependency") {
+    return {
+      title: "Missing Project Zomboid mod requirement",
+      bullets: [
+        mods.length > 0
+          ? `${mods[0]} may need another required mod or workshop dependency.`
+          : "One of your active Zomboid mods may be missing a required dependency.",
+        "Install the missing dependency and make sure it matches your current Project Zomboid version.",
+        "Check whether the mod page lists required workshop items or libraries.",
+        "Restart the game after installing the missing requirement.",
+      ],
+    };
+  }
+
+  if (category === "loader_mismatch") {
+    return {
+      title: "Workshop / version mismatch",
+      bullets: [
+        "One or more workshop mods may not match your current Project Zomboid build.",
+        "Update all workshop mods first, then retest.",
+        "Disable recently added or outdated mods until the crash stops.",
+        "Make sure all active mods are built for the same Project Zomboid version.",
+      ],
+    };
+  }
+
+  return {
+    title: "Project Zomboid Mod / Lua Error",
+    bullets: [
+      mods.length > 0
+        ? `Disable or update ${mods[0]} first, then relaunch the game.`
+        : "Disable or update the most recently added workshop mod first, then relaunch the game.",
+      "Check for Lua errors, workshop mismatches, or failed mod loads in the log.",
+      "Verify that all workshop mods are updated and match your current Project Zomboid version.",
+      "If the issue continues, re-enable mods one at a time until the crash returns.",
+    ],
+  };
+}
+
+  if (gameKey === "custom") {
+    return {
+      title: analysis?.issue || "Custom game / unsupported log",
+      bullets: [
+        analysis?.quickFixFirst ||
+          "Start with the first clear error, exception, or failed plugin/mod line in the log.",
+        mods.length > 0
+          ? `Start by testing without ${mods[0]}.`
+          : "Remove or disable the most recently added mod/plugin first.",
+        "Check version compatibility between the game, mods/plugins, loaders, and required frameworks.",
+        "If the issue still is not clear, load a newer log created immediately after reproducing the problem.",
+      ],
+    };
+  }
+
   switch (category) {
     case "java_mismatch":
       return {
@@ -548,6 +965,16 @@ if (gameKey === "fallout4") {
   "Watch for duplicate libraries or overlapping performance mods.",
 ],
       };
+    case "no_clear_issue_found":
+      return {
+        title: "No clear issue found in this log",
+        bullets: [
+          "This log looks normal and does not show an active crash or broken mod.",
+          "Launch the game again and test normally.",
+          "If the issue returns, load the newest crash or error log created after the problem happens.",
+          "If the problem is visual, performance-related, or intermittent, re-run FixMyGame right after it appears.",
+        ],
+      };
 
     default:
       return {
@@ -565,6 +992,255 @@ if (gameKey === "fallout4") {
   }
 }
 
+function buildSmartFixResultOverride({
+  gameKey,
+  crashLog,
+  analysis,
+  detectedSignals,
+}: {
+  gameKey: string;
+  crashLog: string;
+  analysis: AnalyzeResponse["analysis"] | null;
+  detectedSignals: AnalyzeResponse["detectedSignals"] | null;
+}): AnalyzeResponse["analysis"] | null {
+  const category =
+    analysis?.detectedSignals?.likelyCategory ||
+    detectedSignals?.likelyCategory ||
+    "";
+
+  const lowerCrashLog = String(crashLog || "").toLowerCase();
+
+  if (
+    gameKey === "stardew_valley" &&
+    category === "no_clear_issue_found" &&
+    lowerCrashLog.includes("skipped mods") &&
+    lowerCrashLog.includes("empty folder")
+  ) {
+    const modMatch =
+      crashLog.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's an empty folder\./i) ||
+      crashLog.match(/TRACE SMAPI\]\s+([A-Za-z0-9 _.'\-\[\]]+)\s+\(from Mods\\[^)]*\)\.\.\.[\s\S]*?Failed:\s+it's an empty folder\./i);
+
+    const badFolder = modMatch?.[1]?.trim() || "the empty mod folder";
+
+    return {
+      quickFixFirst: `You can delete the empty folder for ${badFolder} to clean up the warning.`,
+      issue: `There's an empty folder for ${badFolder} in your Mods folder, which is causing a warning.`,
+      confidenceLevel: "High",
+      probabilityBreakdown: [
+        `100% - The empty folder for ${badFolder} is the only issue.`,
+      ],
+      mostLikelyCause: `The empty folder for ${badFolder} is not being recognized as a valid mod.`,
+      recommendedFixSteps: [
+        `Delete the empty folder for ${badFolder} from your Mods folder.`,
+        "Launch Stardew Valley again after removing it so SMAPI creates a fresh log.",
+        "Load the newest SMAPI log created after that launch to confirm the warning is gone.",
+      ],
+      needMoreInfo:
+        "If you still see the same warning after removing it, you may be looking at an older log. Launch the game again and load the newest SMAPI log.",
+      detectedSignals: {
+        ...(analysis?.detectedSignals || detectedSignals || {}),
+        suspectedMods: [badFolder],
+        likelyCategory: "advisory_empty_folder",
+        advisoryLevel: "advisory",
+        advisoryTitle: "Empty mod folder found",
+        advisoryMessage: `${badFolder} is an empty folder. This is not a crash, but it should be removed to clean up the warning.`,
+      },
+    };
+  }
+
+  return null;
+}
+
+function buildUniversalFallbackOverride({
+  gameTitle,
+  crashLog,
+  analysis,
+  detectedSignals,
+}: {
+  gameTitle: string;
+  crashLog: string;
+  analysis: AnalyzeResponse["analysis"] | null;
+  detectedSignals: AnalyzeResponse["detectedSignals"] | null;
+}): AnalyzeResponse["analysis"] | null {
+  const lowerCrashLog = String(crashLog || "").toLowerCase();
+
+  if (!analysis && !detectedSignals) {
+    return {
+      quickFixFirst: `Start by checking the newest ${gameTitle} log for the first clear error or failed mod/plugin line.`,
+      issue: `FixMyGame could not build a strong diagnosis from this ${gameTitle} log yet.`,
+      confidenceLevel: "Low",
+      probabilityBreakdown: [
+        "45% - Incomplete or non-crash log",
+        "35% - Mod/plugin conflict",
+        "20% - Environment or setup issue",
+      ],
+      mostLikelyCause:
+        "The current log may be incomplete, non-fatal, or missing the line that shows the actual failure.",
+      recommendedFixSteps: [
+        `Launch ${gameTitle} again and reproduce the issue.`,
+        "Load the newest crash or error log created after the issue happens.",
+        "Remove the most recently added mod/plugin first if the problem started after installing something new.",
+      ],
+      needMoreInfo:
+        "If the issue continues, provide a newer crash log or describe exactly what is still happening in the refinement box.",
+      detectedSignals: {
+  likelyCategory: "unknown",
+},
+    };
+  }
+
+  const likelyCategory =
+    analysis?.detectedSignals?.likelyCategory ||
+    detectedSignals?.likelyCategory ||
+    "";
+
+  const weakIssue =
+    !analysis?.issue ||
+    analysis.issue.toLowerCase().includes("unknown") ||
+    analysis.issue.toLowerCase().includes("unclear");
+
+  const weakCause =
+    !analysis?.mostLikelyCause ||
+    analysis.mostLikelyCause.toLowerCase().includes("unknown") ||
+    analysis.mostLikelyCause.toLowerCase().includes("unclear");
+
+  const weakSteps =
+    !analysis?.recommendedFixSteps ||
+    analysis.recommendedFixSteps.length === 0;
+
+  const noClearIssue =
+    likelyCategory === "no_clear_issue_found" &&
+    (
+      lowerCrashLog.includes("error") ||
+      lowerCrashLog.includes("exception") ||
+      lowerCrashLog.includes("failed") ||
+      lowerCrashLog.includes("traceback") ||
+      lowerCrashLog.includes("missing dependency")
+    );
+
+  if (!weakIssue && !weakCause && !weakSteps && !noClearIssue) {
+    return null;
+  }
+
+  const suspects =
+    analysis?.detectedSignals?.suspectedMods ||
+    detectedSignals?.suspectedMods ||
+    [];
+
+  const leadSuspect = suspects[0] || "the most recently added mod/plugin";
+
+  return {
+    quickFixFirst:
+      analysis?.quickFixFirst ||
+      `Temporarily disable ${leadSuspect} first, then test again.`,
+    issue:
+      weakIssue
+        ? `FixMyGame found signs of a ${gameTitle} mod, plugin, or setup issue, but the exact failure is not fully confirmed from this log.`
+        : analysis!.issue,
+    confidenceLevel:
+      analysis?.confidenceLevel || "Medium",
+    probabilityBreakdown:
+      analysis?.probabilityBreakdown?.length
+        ? analysis.probabilityBreakdown
+        : [
+            "50% - Mod/plugin conflict",
+            "30% - Missing dependency or version mismatch",
+            "20% - Wrong or incomplete log",
+          ],
+    mostLikelyCause:
+      noClearIssue
+        ? `This log still contains warning/error language, so the current “no clear issue” result is probably too weak. A mod, dependency, or setup issue is still more likely.`
+        : weakCause
+        ? `A mod/plugin conflict, missing dependency, version mismatch, or incomplete install is more likely than a clean/no-issue state.`
+        : analysis!.mostLikelyCause,
+    recommendedFixSteps:
+      weakSteps
+        ? [
+            `Disable or remove ${leadSuspect} first, then test again.`,
+            "Check that all mods/plugins match your exact game version.",
+            "Install any missing required dependency/framework mods.",
+            "If the problem continues, load the newest crash or error log created after the issue happens.",
+          ]
+        : analysis!.recommendedFixSteps,
+    needMoreInfo:
+      analysis?.needMoreInfo ||
+      "If this result still feels too generic, use Continue Diagnostic or Still Crashing and describe exactly what the app missed.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      suspectedMods: suspects,
+      likelyCategory: likelyCategory || "unknown",
+    },
+  };
+}
+
+function buildLoadedLogSummary({
+  crashLog,
+}: {
+  crashLog: string;
+}) {
+  const text = String(crashLog || "");
+  if (!text.trim()) return "";
+
+  const lines = text.split(/\r?\n/);
+
+  let modCount = 0;
+
+  const smapiModLineMatch = text.match(/Loaded\s+(\d+)\s+mods?/i);
+  if (smapiModLineMatch) {
+    modCount = Number(smapiModLineMatch[1]) || 0;
+  }
+
+  if (!modCount) {
+    const stardewModMatches = text.match(/\(from Mods\\/gi);
+    modCount = stardewModMatches ? stardewModMatches.length : 0;
+  }
+
+  const warningKeys = new Set<string>();
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    const emptyFolderMatch =
+      line.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's an empty folder\./i) ||
+      line.match(/TRACE SMAPI\]\s+([A-Za-z0-9 _.'\-\[\]]+)\s+\(from Mods\\[^)]*\)\.\.\.[\s\S]*?Failed:\s+it's an empty folder\./i);
+
+    if (emptyFolderMatch?.[1]) {
+      warningKeys.add(`empty-folder:${emptyFolderMatch[1].trim().toLowerCase()}`);
+      continue;
+    }
+
+    if (lower.includes("skipped mods")) {
+      warningKeys.add("skipped-mods");
+      continue;
+    }
+
+    if (/\bwarn(?:ing)?\b/i.test(line)) {
+      const normalized = lower.replace(/\s+/g, " ").trim();
+      warningKeys.add(`warning:${normalized}`);
+    }
+  }
+
+  const warningCount = warningKeys.size;
+
+  const modLabel =
+    modCount === 1 ? "1 mod detected" : `${modCount} mods detected`;
+
+  const warningLabel =
+    warningCount === 1 ? "1 warning found" : `${warningCount} warnings found`;
+
+  return `Loaded latest log • ${modLabel} • ${warningLabel}`;
+}
+
+function isAdvisoryCategory(category?: string) {
+  return [
+    "advisory_skipped_mod",
+    "advisory_empty_folder",
+    "advisory_optional_dependency",
+    "advisory_workshop_warning",
+    "advisory_partial_load",
+  ].includes(String(category || ""));
+}
+
 function formatCategoryLabel(category?: string, gameKey?: string) {
   if (!category) return "";
 
@@ -580,6 +1256,8 @@ function formatCategoryLabel(category?: string, gameKey?: string) {
         return "Graphics / Driver Issue";
       case "out_of_memory":
         return "Memory Issue";
+      case "no_clear_issue_found":
+        return "No Clear Issue Found";
       default:
         return category
           .split("_")
@@ -628,6 +1306,60 @@ function formatCategoryLabel(category?: string, gameKey?: string) {
     }
   }
 
+    if (gameKey === "cyberpunk2077") {
+    switch (category) {
+      case "mod_conflict":
+        return "Framework / Mod Conflict";
+      case "missing_dependency":
+        return "Missing Core Framework";
+      case "gpu_driver_issue":
+        return "Graphics / Driver Issue";
+      case "no_clear_issue_found":
+        return "No Clear Issue Found";
+      default:
+        return category
+          .split("_")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+    }
+  }
+
+  if (gameKey === "baldurs_gate_3") {
+    switch (category) {
+      case "mod_conflict":
+        return "BG3 Mod Conflict";
+      case "missing_dependency":
+        return "Missing BG3 Requirement";
+      case "loader_mismatch":
+        return "Script Extender / Mod Mismatch";
+      case "no_clear_issue_found":
+        return "No Clear Issue Found";
+      default:
+        return category
+          .split("_")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+    }
+  }
+
+    if (gameKey === "project_zomboid") {
+    switch (category) {
+      case "mod_conflict":
+        return "Workshop / Lua Conflict";
+      case "missing_dependency":
+        return "Missing Mod Requirement";
+      case "loader_mismatch":
+        return "Workshop Version Mismatch";
+      case "no_clear_issue_found":
+        return "No Clear Issue Found";
+      default:
+        return category
+          .split("_")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ");
+    }
+  }
+  
   switch (category) {
     case "java_mismatch":
       return "Java Mismatch";
@@ -721,6 +1453,63 @@ function getTopFeaturePills(gameKey: string) {
     ];
   }
 
+    if (gameKey === "fallout_new_vegas") {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "NVSE / Plugin Detection",
+      "Smart Fix Paths",
+    ];
+  }
+
+    if (gameKey === "slime_rancher" || gameKey === "slime_rancher_2") {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "Mod / Plugin Detection",
+      "Smart Fix Paths",
+    ];
+  }
+      if (gameKey === "cyberpunk2077") {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "REDmod / Framework Detection",
+      "Smart Fix Paths",
+    ];
+  }
+
+  if (gameKey === "baldurs_gate_3") {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "BG3 Mod / Script Extender Detection",
+      "Smart Fix Paths",
+    ];
+  }
+
+  if (gameKey === "project_zomboid") {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "Workshop / Lua Detection",
+      "Smart Fix Paths",
+    ];
+  }
+
+  if (
+    gameKey === "witcher3" ||
+    gameKey === "seven_days_to_die" ||
+    gameKey === "xcom2"
+  ) {
+    return [
+      "Desktop Scanner",
+      "AI Diagnostic Engine",
+      "Mod / Plugin Detection",
+      "Smart Fix Paths",
+    ];
+  }
+
   return [
     "Desktop Scanner",
     "AI Diagnostic Engine",
@@ -731,6 +1520,23 @@ function getTopFeaturePills(gameKey: string) {
 
 function quickDetect(log: string, gameKey: string) {
   const lower = log.toLowerCase();
+
+    if (
+    lower.includes("mods loaded and ready!") &&
+    lower.includes("all mods up to date.") &&
+    lower.includes("disconnected: closedgame") &&
+    !lower.includes(" error ") &&
+    !lower.includes("exception")
+  ) {
+    return {
+      status: "No clear issue",
+      session: "Normal log",
+      loader: null,
+      java: null,
+      issue: null,
+      error: null,
+    };
+  }
 
   if (gameKey === "minecraft") {
     const loader =
@@ -745,7 +1551,7 @@ function quickDetect(log: string, gameKey: string) {
       null;
 
     let error: string | null = null;
-let issue: string | null = null;
+    let issue: string | null = null;
 
 if (lower.includes("unsupportedclassversionerror")) {
   error = "UnsupportedClassVersionError";
@@ -800,6 +1606,37 @@ return {
   error,
 };
   }
+  if (gameKey === "stardew_valley") {
+  let issue: string | null = null;
+  let error: string | null = null;
+
+  if (lower.includes("skipped mods") && lower.includes("empty folder")) {
+    issue = "Skipped empty mod folder";
+    error = "SkippedMod";
+  } else if (lower.includes("skipped mods")) {
+    issue = "Skipped mod";
+    error = "SkippedMod";
+  } else if (lower.includes("missing dependency")) {
+    issue = "Missing dependency";
+    error = "MissingDependency";
+  } else if (lower.includes("because it's an empty folder")) {
+    issue = "Empty mod folder";
+    error = "EmptyFolder";
+  } else if (lower.includes("failed")) {
+    issue = "Stardew mod issue";
+    error = "Failed";
+  } else if (lower.includes("error")) {
+    issue = "Stardew log warning";
+    error = "Error";
+  }
+
+  return {
+    loader: "SMAPI",
+    java: null,
+    issue,
+    error,
+  };
+}
 
   if (gameKey === "sims4") {
     const error =
@@ -839,6 +1676,61 @@ return {
       error,
     };
   }
+
+    if (gameKey === "cyberpunk2077") {
+  const error =
+    log.match(/(error|failed|exception|crash|missing)/i)?.[1] || null;
+
+  return {
+    loader: "REDmod / RED4ext / CET",
+    java: null,
+    issue: error ? "Cyberpunk mod or framework issue" : null,
+    error,
+  };
+}
+
+  if (gameKey === "baldurs_gate_3") {
+    const error =
+      log.match(/(error|failed|exception|crash|missing)/i)?.[1] ||
+      null;
+
+    return {
+      loader: "BG3 Mod Manager / Script Extender",
+      java: null,
+      issue: error ? "BG3 mod or Script Extender issue" : null,
+      error,
+    };
+  }
+
+    if (gameKey === "project_zomboid") {
+  let issue: string | null = null;
+  let error: string | null = null;
+
+  if (lower.includes("stack traceback") || lower.includes("attempt to index a nil value")) {
+  issue = "Lua error";
+  error = "LuaError";
+} else if (lower.includes("game crashed")) {
+  issue = "Game crash detected";
+  error = "Crash";
+} else if (lower.includes("workshop item version mismatch")) {
+  issue = "Workshop warning";
+  error = "WorkshopWarning";
+} else if (lower.includes("mod id:") && lower.includes("failed to load")) {
+  issue = "Partially failed mod load";
+  error = "PartialModLoad";
+  } else {
+    error =
+      log.match(/(error|failed|exception|crash|traceback|missing)/i)?.[1] || null;
+    issue = error ? "Project Zomboid mod or Lua issue" : null;
+  }
+
+  return {
+    loader: "Zomboid / Lua / Workshop",
+    java: null,
+    issue,
+    error,
+  };
+}
 
   const rawError =
   log.match(/([A-Za-z0-9_.]*(Exception|Error))(?::\s*[^\n]*)?/i)?.[1]?.trim() ||
@@ -1002,6 +1894,27 @@ function extractModsFromLog(log: string, gameKey: string) {
     return Array.from(mods).slice(0, 8);
   }
 
+  if (gameKey === "stardew_valley") {
+  for (const line of lines) {
+    const skippedModMatch = line.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's/i);
+    if (skippedModMatch?.[1]) {
+      mods.add(skippedModMatch[1].trim().toLowerCase());
+    }
+
+    const fromModsMatch = line.match(/from Mods\\([^\\,\]]+)/i);
+    if (fromModsMatch?.[1]) {
+      mods.add(fromModsMatch[1].trim().toLowerCase());
+    }
+
+    const smapiNamedMatch = line.match(/\[INFO\s+SMAPI\]\s+([A-Za-z0-9 _.'\-\[\]]+)\s+\d/i);
+    if (smapiNamedMatch?.[1]) {
+      mods.add(smapiNamedMatch[1].trim().toLowerCase());
+    }
+  }
+
+  return Array.from(mods).slice(0, 8);
+}
+
   if (gameKey === "sims4") {
     for (const line of lines) {
       const matches = line.match(/\b(mccc|wickedwhims|basemental|ui cheats|better exceptions|xml injector|tmex)\b/gi);
@@ -1029,6 +1942,59 @@ function extractModsFromLog(log: string, gameKey: string) {
       const matches = line.match(/\b(f4se|buffout|looksmenu|mcm|sim settlements|unofficial patch)\b/gi);
       if (matches) {
         for (const name of matches) mods.add(name.toLowerCase());
+      }
+    }
+
+    return Array.from(mods).slice(0, 8);
+  }
+
+    if (gameKey === "cyberpunk2077") {
+    for (const line of lines) {
+      const matches = line.match(/\b(redscript|red4ext|cyber engine tweaks|archive xl|tweakxl|codeware|redmod)\b/gi);
+      if (matches) {
+        for (const name of matches) mods.add(name.toLowerCase());
+      }
+
+      const archiveMatch = line.match(/archive[\/\\]pc[\/\\]mod[\/\\]([a-z0-9._ -]+)/i);
+      if (archiveMatch?.[1]) {
+        mods.add(archiveMatch[1].trim().toLowerCase());
+      }
+    }
+
+    return Array.from(mods).slice(0, 8);
+  }
+
+  if (gameKey === "baldurs_gate_3") {
+    for (const line of lines) {
+      const matches = line.match(/\b(script extender|bg3 mod manager|improvedui|mod fixer|lslib|gustav)\b/gi);
+      if (matches) {
+        for (const name of matches) mods.add(name.toLowerCase());
+      }
+
+      const pakMatch = line.match(/([a-z0-9._ -]+)\.pak/i);
+      if (pakMatch?.[1]) {
+        mods.add(pakMatch[1].trim().toLowerCase());
+      }
+    }
+
+    return Array.from(mods).slice(0, 8);
+  }
+
+  if (gameKey === "project_zomboid") {
+    for (const line of lines) {
+      const matches = line.match(/\b(workshop|mod id|map folder|lua|b41|b42)\b/gi);
+      if (matches) {
+        for (const name of matches) mods.add(name.toLowerCase());
+      }
+
+      const modIdMatch = line.match(/mod id[:=]\s*([a-z0-9._-]+)/i);
+      if (modIdMatch?.[1]) {
+        mods.add(modIdMatch[1].toLowerCase());
+      }
+
+      const workshopMatch = line.match(/workshop item[:=]\s*([0-9]+)/i);
+      if (workshopMatch?.[1]) {
+        mods.add(`workshop-${workshopMatch[1]}`);
       }
     }
 
@@ -1103,12 +2069,42 @@ function detectGameFromLog(log: string): string | null {
     return "stardew_valley";
   }
 
-  if (
+    if (
     lower.includes("cyberpunk 2077") ||
     lower.includes("redscript") ||
-    lower.includes("archive\\pc\\mod")
+    lower.includes("archive\\pc\\mod") ||
+    lower.includes("archive/pc/mod") ||
+    lower.includes("red4ext") ||
+    lower.includes("cyber engine tweaks")
   ) {
     return "cyberpunk2077";
+  }
+
+  if (
+    lower.includes("baldur's gate 3") ||
+    lower.includes("baldurs gate 3") ||
+    lower.includes("bg3") ||
+    lower.includes("larian") ||
+    lower.includes("script extender") ||
+    lower.includes("gustav") ||
+    lower.includes("story compilation error")
+  ) {
+    return "baldurs_gate_3";
+  }
+
+    if (
+    lower.includes("project zomboid") ||
+    lower.includes("zomboid") ||
+    lower.includes("pz.log") ||
+    lower.includes("lua checksum") ||
+    lower.includes("workshop item version") ||
+    lower.includes("mods loaded") ||
+    lower.includes("stack traceback") ||
+    lower.includes("attempt to index a nil value") ||
+    lower.includes("mod id:") ||
+    lower.includes("failed to load")
+  ) {
+    return "project_zomboid";
   }
 
   return null;
@@ -1119,6 +2115,60 @@ function getMostSuspiciousLine(log: string, gameKey: string) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
+
+  if (lines.length === 0) return null;
+
+  // Game-specific priority overrides FIRST
+  if (gameKey === "baldurs_gate_3") {
+    const dependencyLine = lines.find((line) =>
+      line.toLowerCase().includes("missing dependency")
+    );
+    if (dependencyLine) return dependencyLine;
+
+    const failedLoadingLine = lines.find((line) =>
+      line.toLowerCase().includes("failed loading")
+    );
+    if (failedLoadingLine) return failedLoadingLine;
+
+    const mismatchLine = lines.find((line) =>
+      line.toLowerCase().includes("mismatch")
+    );
+    if (mismatchLine) return mismatchLine;
+  }
+
+  if (gameKey === "cyberpunk2077") {
+    const dependencyLine = lines.find((line) =>
+      line.toLowerCase().includes("missing dependency")
+    );
+    if (dependencyLine) return dependencyLine;
+
+    const failedLine = lines.find((line) =>
+      line.toLowerCase().includes("failed")
+    );
+    if (failedLine) return failedLine;
+
+    const exceptionLine = lines.find((line) =>
+      line.toLowerCase().includes("exception")
+    );
+    if (exceptionLine) return exceptionLine;
+  }
+
+  if (gameKey === "project_zomboid") {
+    const tracebackLine = lines.find((line) =>
+      line.toLowerCase().includes("traceback")
+    );
+    if (tracebackLine) return tracebackLine;
+
+    const nilValueLine = lines.find((line) =>
+      line.toLowerCase().includes("nil value")
+    );
+    if (nilValueLine) return nilValueLine;
+
+    const failedModLine = lines.find((line) =>
+      line.toLowerCase().includes("failed to load")
+    );
+    if (failedModLine) return failedModLine;
+  }
 
   const scored = lines.map((line) => {
     const lower = line.toLowerCase();
@@ -1166,6 +2216,36 @@ function getMostSuspiciousLine(log: string, gameKey: string) {
       if (lower.includes("plugin")) score += 7;
       if (lower.includes("crash")) score += 8;
       if (lower.includes("looksmenu")) score += 6;
+    } else if (gameKey === "baldurs_gate_3") {
+      if (lower.includes("missing dependency")) score += 20;
+      if (lower.includes("failed loading")) score += 16;
+      if (lower.includes("modsettings.lsx")) score += 15;
+      if (lower.includes("script extender mismatch")) score += 14;
+      if (lower.includes("story compilation error")) score += 13;
+      if (lower.includes("script extender")) score += 8;
+      if (lower.includes("improvedui")) score += 10;
+      if (lower.includes("error")) score += 6;
+      if (lower.includes("crashed")) score += 2;
+    } else if (gameKey === "cyberpunk2077") {
+      if (lower.includes("missing dependency")) score += 20;
+      if (lower.includes("codeware")) score += 14;
+      if (lower.includes("archivexl")) score += 14;
+      if (lower.includes("red4ext")) score += 12;
+      if (lower.includes("cyber_engine_tweaks")) score += 12;
+      if (lower.includes("failed")) score += 10;
+      if (lower.includes("exception")) score += 9;
+      if (lower.includes("access violation")) score += 8;
+      if (lower.includes("error")) score += 6;
+      if (lower.includes("crashed")) score += 2;
+    } else if (gameKey === "project_zomboid") {
+      if (lower.includes("traceback")) score += 18;
+      if (lower.includes("nil value")) score += 16;
+      if (lower.includes("failed to load")) score += 14;
+      if (lower.includes("workshop item version mismatch")) score += 12;
+      if (lower.includes("mod id:")) score += 10;
+      if (lower.includes("exception")) score += 8;
+      if (lower.includes("error")) score += 7;
+      if (lower.includes("crashed")) score += 2;
     } else {
       if (lower.includes("exception")) score += 8;
       if (lower.includes("error")) score += 7;
@@ -1260,17 +2340,23 @@ const GAME_PRESETS = [
   { key: "skyrimse", label: "Skyrim Special Edition" },
   { key: "gmod", label: "Garry's Mod" },
   { key: "fallout4", label: "Fallout 4" },
+  { key: "fallout_new_vegas", label: "Fallout: New Vegas" },
   { key: "cyberpunk2077", label: "Cyberpunk 2077" },
   { key: "starfield", label: "Starfield" },
   { key: "cities_skylines", label: "Cities: Skylines" },
   { key: "stardew_valley", label: "Stardew Valley" },
+  { key: "slime_rancher", label: "Slime Rancher" },
+  { key: "slime_rancher_2", label: "Slime Rancher 2" },
   { key: "rimworld", label: "RimWorld" },
   { key: "project_zomboid", label: "Project Zomboid" },
   { key: "terraria", label: "Terraria" },
   { key: "kerbal_space_program", label: "Kerbal Space Program" },
   { key: "bannerlord", label: "Bannerlord (Mount & Blade II)" },
+  { key: "baldurs_gate_3", label: "Baldur's Gate 3" },
+  { key: "witcher3", label: "The Witcher 3" },
+  { key: "seven_days_to_die", label: "7 Days to Die" },
+  { key: "xcom2", label: "XCOM 2" },
   { key: "valheim", label: "Valheim" },
-  { key: "slime_rancher_2", label: "Slime Rancher 2" },
   { key: "resident_evil_re", label: "Resident Evil (RE Engine)" },
   { key: "lethal_company", label: "Lethal Company" },
   { key: "palworld", label: "Palworld" },
@@ -1294,115 +2380,151 @@ const GAME_PROFILES: Record<
   },
   sims4: {
     label: "The Sims 4",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   skyrimse: {
     label: "Skyrim Special Edition",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   gmod: {
     label: "Garry's Mod",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   fallout4: {
     label: "Fallout 4",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+    fallout_new_vegas: {
+    label: "Fallout: New Vegas",
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   cyberpunk2077: {
     label: "Cyberpunk 2077",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   starfield: {
     label: "Starfield",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   cities_skylines: {
     label: "Cities: Skylines",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   stardew_valley: {
     label: "Stardew Valley",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
-  rimworld: {
-    label: "RimWorld",
-    supportsAutoDetect: false,
-    supportsModsFolder: true,
-    supportsLogsFolder: true,
-  },
-  project_zomboid: {
-    label: "Project Zomboid",
-    supportsAutoDetect: false,
-    supportsModsFolder: true,
-    supportsLogsFolder: true,
-  },
-  terraria: {
-    label: "Terraria",
-    supportsAutoDetect: false,
-    supportsModsFolder: true,
-    supportsLogsFolder: true,
-  },
-  kerbal_space_program: {
-    label: "Kerbal Space Program",
-    supportsAutoDetect: false,
-    supportsModsFolder: true,
-    supportsLogsFolder: true,
-  },
-  bannerlord: {
-    label: "Bannerlord (Mount & Blade II)",
-    supportsAutoDetect: false,
-    supportsModsFolder: true,
-    supportsLogsFolder: true,
-  },
-  valheim: {
-    label: "Valheim",
-    supportsAutoDetect: false,
+    slime_rancher: {
+    label: "Slime Rancher",
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   slime_rancher_2: {
     label: "Slime Rancher 2",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  rimworld: {
+    label: "RimWorld",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  project_zomboid: {
+    label: "Project Zomboid",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  terraria: {
+    label: "Terraria",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  kerbal_space_program: {
+    label: "Kerbal Space Program",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  bannerlord: {
+    label: "Bannerlord (Mount & Blade II)",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+    baldurs_gate_3: {
+    label: "Baldur's Gate 3",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  witcher3: {
+    label: "The Witcher 3",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  seven_days_to_die: {
+    label: "7 Days to Die",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  xcom2: {
+    label: "XCOM 2",
+    supportsAutoDetect: true,
+    supportsModsFolder: true,
+    supportsLogsFolder: true,
+  },
+  valheim: {
+    label: "Valheim",
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   resident_evil_re: {
     label: "Resident Evil (RE Engine)",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   lethal_company: {
     label: "Lethal Company",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   palworld: {
     label: "Palworld",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
   custom: {
     label: "Custom / Other",
-    supportsAutoDetect: false,
+    supportsAutoDetect: true,
     supportsModsFolder: false,
     supportsLogsFolder: false,
   },
@@ -1410,6 +2532,13 @@ const GAME_PROFILES: Record<
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:3001";
+
+  const SORTED_GAME_PRESETS = [
+  ...GAME_PRESETS.filter((g) => g.key !== "custom").sort((a, b) =>
+    a.label.localeCompare(b.label)
+  ),
+  ...GAME_PRESETS.filter((g) => g.key === "custom"),
+];
 
   async function fetchDebugWithRetry(retries = 3) {
   for (let i = 0; i < retries; i++) {
@@ -1495,7 +2624,23 @@ function getProgressState(params: {
 }
 
 export default function Page() {
+  const [betaOpen, setBetaOpen] = useState(true);
+  const [betaMessage, setBetaMessage] = useState("");
+  const [checkingBetaStatus, setCheckingBetaStatus] = useState(true);
   const [selectedGameKey, setSelectedGameKey] = useState("minecraft");
+  const [hasAppliedAutoGameDetect, setHasAppliedAutoGameDetect] = useState(false);
+  const [hasAcceptedAuthorization, setHasAcceptedAuthorization] = useState(false);
+  const [checkingAuthorization, setCheckingAuthorization] = useState(true);
+  const [supportTelemetryEnabled, setSupportTelemetryEnabled] = useState(false);
+const [supportSessionId] = useState(() => crypto.randomUUID());
+const [supportEventHistory, setSupportEventHistory] = useState<
+  {
+    id: string;
+    type: string;
+    createdAt: string;
+    detail?: string;
+  }[]
+>([]);
   const [gpuModel, setGpuModel] = useState("RTX 3060");
   const [driverVersion, setDriverVersion] = useState("551.86");
   const [graphicsApiMode, setGraphicsApiMode] = useState("Auto Detect");
@@ -1509,12 +2654,28 @@ export default function Page() {
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
 
+  const [autoDetectStatus, setAutoDetectStatus] = useState<
+  "idle" | "logs_found" | "no_logs" | "not_installed"
+>("idle");
   const [loadingLimit, setLoadingLimit] = useState(true);
   const [running, setRunning] = useState(false);
   const [loadingDesktopLog, setLoadingDesktopLog] = useState(false);
   const [scanningLogs, setScanningLogs] = useState(false);
+  const [detectingSystemSpecs, setDetectingSystemSpecs] = useState(false);
   const [result, setResult] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [folderActionError, setFolderActionError] = useState("");
+  const [quickActionFolderError, setQuickActionFolderError] = useState("");
+  function setTimedError(
+  setter: (value: string) => void,
+  message: string,
+  duration = 4000
+) {
+  setter(message);
+  setTimeout(() => {
+    setter("");
+  }, duration);
+}
   const [actionMsg, setActionMsg] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1522,10 +2683,11 @@ export default function Page() {
   const [showFixPreviewModal, setShowFixPreviewModal] = useState(false);
   const [showFixHistoryModal, setShowFixHistoryModal] = useState(false);
   const [fixPreviewError, setFixPreviewError] = useState("");
+  const [fixHistoryTab, setFixHistoryTab] = useState<"saved" | "diagnostics">("saved");
   const [actionMsgLocation, setActionMsgLocation] = useState<"fixAssistant" | "smartFix" | "diagnostic" | null>(null);
   const [showProModal, setShowProModal] = useState(false);
   const [desktopConnected, setDesktopConnected] = useState(false);
- const [applyingSafeFix, setApplyingSafeFix] = useState(false);
+  const [applyingSafeFix, setApplyingSafeFix] = useState(false);
   const [undoingSafeFix, setUndoingSafeFix] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
   const [detectedLogs, setDetectedLogs] = useState<
@@ -1535,6 +2697,8 @@ export default function Page() {
   const [detectedSignals, setDetectedSignals] = useState<AnalyzeResponse["detectedSignals"] | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzeResponse["analysis"] | null>(null);
   const [quickSignals, setQuickSignals] = useState<{
+    status?: string | null;
+    session?: string | null;
     loader?: string | null;
     java?: string | null;
     issue?: string | null;
@@ -1549,10 +2713,74 @@ export default function Page() {
   const [liveMods, setLiveMods] = useState<string[]>([]);
   const [mostSuspiciousLine, setMostSuspiciousLine] = useState<string | null>(null);
   const [showFixFeedback, setShowFixFeedback] = useState(false);
+  const [continuedDiagnosticBase, setContinuedDiagnosticBase] =
+  useState<FixHistoryItem | null>(null);
+  const [resultFollowupMessage, setResultFollowupMessage] = useState("");
+  const [resultFollowupTone, setResultFollowupTone] = useState<"success" | "info" | "warning" | null>(null);
+  const [showDiagnosticRefineBox, setShowDiagnosticRefineBox] = useState(false);
+  const [diagnosticRefineMode, setDiagnosticRefineMode] = useState<"continue" | "still_crashing" | null>(null);
+  const [diagnosticRefineText, setDiagnosticRefineText] = useState("");
+  const [showAdditionalRefineLogBox, setShowAdditionalRefineLogBox] = useState(false);
+  const [additionalRefineLog, setAdditionalRefineLog] = useState("");
   const [lastFixResult, setLastFixResult] = useState<{
-  file?: string;
+  movedFile?: string;
+  matchedName?: string;
+  matchedSuspect?: string;
+  itemType?: "file" | "folder";
+  candidateKind?: "empty_folder" | "invalid_loose_file" | "mod_file" | "mod_folder";
+  backupPath?: string;
+  quarantinePath?: string;
+  originalPath?: string;
   mods?: string[];
-  } | null>(null);
+} | null>(null);
+
+  useEffect(() => {
+  fetchBetaStatus();
+}, []);
+
+  useEffect(() => {
+  try {
+    const raw = localStorage.getItem(SYSTEM_PREFS_STORAGE_KEY);
+    if (!raw) return;
+
+    const saved = JSON.parse(raw);
+
+    if (typeof saved.selectedGameKey === "string" && saved.selectedGameKey) {
+      setSelectedGameKey(saved.selectedGameKey);
+    }
+
+    if (typeof saved.gpuModel === "string") {
+      setGpuModel(saved.gpuModel);
+    }
+
+    if (typeof saved.driverVersion === "string") {
+      setDriverVersion(saved.driverVersion);
+    }
+
+    if (typeof saved.graphicsApiMode === "string") {
+      setGraphicsApiMode(saved.graphicsApiMode);
+    }
+  } catch {
+    // ignore bad saved data
+  }
+}, []);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(
+      SYSTEM_PREFS_STORAGE_KEY,
+      JSON.stringify({
+        selectedGameKey,
+        gpuModel,
+        driverVersion,
+        graphicsApiMode,
+      })
+    );
+  } catch {
+    // ignore storage errors
+  }
+}, [selectedGameKey, gpuModel, driverVersion, graphicsApiMode]);
+
   const canRun = useMemo(() => isPro || remaining > 0, [isPro, remaining]);
   const progressState = useMemo(
   () =>
@@ -1574,15 +2802,76 @@ export default function Page() {
   ]
 );
   const smartFixPath = useMemo(
-    () => getSmartFixPath(detectedSignals, analysis, selectedGameKey),
-    [detectedSignals, analysis, selectedGameKey]
-  );
-  const selectedGame = useMemo(
-  () => GAME_PRESETS.find((g) => g.key === selectedGameKey) ?? GAME_PRESETS[0],
+  () =>
+    getSmartFixPath(
+      detectedSignals,
+      analysis,
+      selectedGameKey,
+      currentLogPath,
+      crashLog
+    ),
+  [detectedSignals, analysis, selectedGameKey, currentLogPath, crashLog]
+);
+
+const selectedGame = useMemo(
+  () => GAME_PRESETS.find((g) => g.key === selectedGameKey) ?? SORTED_GAME_PRESETS[0],
   [selectedGameKey]
 );
 
 const gameTitle = selectedGame.label;
+
+const smartFixResultOverride = useMemo(
+  () =>
+    buildSmartFixResultOverride({
+      gameKey: selectedGameKey,
+      crashLog,
+      analysis,
+      detectedSignals,
+    }),
+  [selectedGameKey, crashLog, analysis, detectedSignals]
+);
+
+const universalFallbackOverride = useMemo(
+  () =>
+    buildUniversalFallbackOverride({
+      gameTitle,
+      crashLog,
+      analysis: smartFixResultOverride ?? analysis,
+      detectedSignals,
+    }),
+  [gameTitle, crashLog, analysis, detectedSignals, smartFixResultOverride]
+);
+
+const displayAnalysis =
+  universalFallbackOverride ??
+  smartFixResultOverride ??
+  analysis;
+
+const displayDetectedSignals =
+  displayAnalysis?.detectedSignals ||
+  detectedSignals;
+
+const loadedLogSummary = useMemo(
+  () =>
+    buildLoadedLogSummary({
+      crashLog,
+    }),
+  [gameTitle, crashLog]
+);
+
+function applyDetectedGameOnce(detectedGame: string | null) {
+  if (!detectedGame) return;
+
+  if (!hasAppliedAutoGameDetect && detectedGame !== selectedGameKey) {
+    setSelectedGameKey(detectedGame);
+    setHasAppliedAutoGameDetect(true);
+
+    showActionMessage(
+      `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+      "fixAssistant"
+    );
+  }
+}
 
   const proModalContent = useMemo(
   () => getProModalContent(proModalContext, gameTitle),
@@ -1596,10 +2885,220 @@ function showActionMessage(
   setActionMsg(message);
   setActionMsgLocation(location);
 
+  const duration =
+    location === "fixAssistant" && message.startsWith("Loaded latest log")
+      ? 8000
+      : 5000;
+
   setTimeout(() => {
     setActionMsg("");
     setActionMsgLocation(null);
-  }, 4000);
+  }, duration);
+}
+
+function openSupportEmail() {
+  const subject = encodeURIComponent(
+    `FixMyGame Issue Report — ${gameTitle || "Unknown Game"}`
+  );
+
+  const body = encodeURIComponent(`
+Describe your issue here:
+
+What happened:
+What did you expect:
+Steps to reproduce:
+Did the game crash or did FixMyGame behave incorrectly:
+
+
+(Please leave the technical details below — they help us fix your issue faster.)
+---
+
+App Version: 1.0.0
+Game: ${gameTitle || "Not selected"}
+GPU: ${gpuModel || "Not provided"}
+Driver: ${driverVersion || "Not provided"}
+Graphics API: ${graphicsApiMode || "Not provided"}
+
+---
+
+Continuation Mode: ${
+    continuedDiagnosticBase ? "Active" : "Not Active"
+  }
+
+---
+
+Last Diagnostic Result:
+${result ? result.slice(0, 1500) : "No diagnostic result available"}
+
+---
+
+Detected Signals:
+${
+  displayAnalysis?.detectedSignals
+    ? JSON.stringify(displayAnalysis.detectedSignals, null, 2).slice(0, 800)
+    : displayDetectedSignals
+    ? JSON.stringify(displayDetectedSignals, null, 2).slice(0, 800)
+    : "None"
+}
+
+---
+
+(Optional) Crash Log Snippet:
+${crashLog ? crashLog.slice(0, 1500) : "Not provided"}
+`);
+
+  window.location.href = `mailto:fixmygame.support@gmail.com?subject=${subject}&body=${body}`;
+}
+
+async function runRefinedDiagnosticNow() {
+  const nextLog = additionalRefineLog.trim() || crashLog.trim();
+
+  if (!nextLog) {
+    setErrorMsg("Paste a crash log / error first, or add an additional crash log below.");
+    return;
+  }
+
+  await runDiagnostic(nextLog);
+}
+
+function startResultRefinement(mode: "continue" | "still_crashing") {
+  if (!displayAnalysis) return;
+
+  const diagnosticText = buildDiagnosticResultText(displayAnalysis, result);
+
+  const tempBase: FixHistoryItem = {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+    gameKey: selectedGameKey,
+    gameTitle,
+    type: "diagnostic_run",
+    title: `${gameTitle} continued diagnostic base`,
+    text: diagnosticText,
+    analysisSummary: {
+      issue: displayAnalysis?.issue,
+quickFixFirst: displayAnalysis?.quickFixFirst,
+mostLikelyCause: displayAnalysis?.mostLikelyCause,
+needMoreInfo: displayAnalysis?.needMoreInfo,
+likelyCategory:
+  displayAnalysis?.detectedSignals?.likelyCategory ||
+  displayDetectedSignals?.likelyCategory,
+suspectedMods:
+  displayAnalysis?.detectedSignals?.suspectedMods ||
+  displayDetectedSignals?.suspectedMods ||
+  [],
+      previousRelevantLog: crashLog,
+    },
+  };
+
+  setContinuedDiagnosticBase(tempBase);
+  setDiagnosticRefineMode(mode);
+  setShowDiagnosticRefineBox(true);
+  setDiagnosticRefineText("");
+  resetResultFollowupMessage();
+}
+
+function showResultFollowupMessage(
+  message: string,
+  tone: "success" | "info" | "warning"
+) {
+  setResultFollowupMessage(message);
+  setResultFollowupTone(tone);
+}
+
+function resetResultFollowupMessage() {
+  setResultFollowupMessage("");
+  setResultFollowupTone(null);
+}
+
+function undoResultRefinement() {
+  setShowDiagnosticRefineBox(false);
+  setDiagnosticRefineMode(null);
+  setDiagnosticRefineText("");
+  setShowAdditionalRefineLogBox(false);
+  setAdditionalRefineLog("");
+  setContinuedDiagnosticBase(null);
+  resetResultFollowupMessage();
+}
+
+function acceptAuthorizationGate() {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
+    window.localStorage.setItem(
+      SUPPORT_TELEMETRY_STORAGE_KEY,
+      supportTelemetryEnabled ? "true" : "false"
+    );
+  }
+
+  setHasAcceptedAuthorization(true);
+}
+
+async function fetchBetaStatus() {
+  try {
+    const data = await fetchJSON<{ betaOpen: boolean; message?: string }>(
+      `${API_BASE_URL}/api/beta-status`,
+      { method: "GET" }
+    );
+
+    setBetaOpen(Boolean(data.betaOpen));
+    setBetaMessage(
+      data.message ||
+        (data.betaOpen
+          ? "FixMyGame beta is active."
+          : "The FixMyGame beta period has ended.")
+    );
+  } catch {
+    setBetaOpen(false);
+    setBetaMessage("FixMyGame could not verify beta access right now.");
+  } finally {
+    setCheckingBetaStatus(false);
+  }
+}
+
+async function exitAuthorizationGate() {
+  if (window.fixMyGame?.closeApp) {
+    await window.fixMyGame.closeApp();
+    return;
+  }
+
+  window.close();
+}
+
+async function autoFillSystemSpecs() {
+  setErrorMsg("");
+
+  if (!window.fixMyGame?.detectSystemSpecs) {
+    setErrorMsg("Auto-fill system info is only available inside the Electron desktop app.");
+    return;
+  }
+
+  try {
+    setDetectingSystemSpecs(true);
+
+    const response = await window.fixMyGame.detectSystemSpecs();
+
+    if (!response?.ok) {
+      setErrorMsg(response?.error || "Could not auto-fill system info.");
+      return;
+    }
+
+    if (response.gpuModel) {
+      setGpuModel(response.gpuModel);
+    }
+
+    if (response.driverVersion) {
+      setDriverVersion(response.driverVersion);
+    }
+
+    setGraphicsApiMode(response.graphicsApiMode || "Auto Detect");
+
+    showActionMessage("System info detected and fields updated.", "diagnostic");
+  } catch (error) {
+    setErrorMsg(
+      error instanceof Error ? error.message : "Could not auto-fill system info."
+    );
+  } finally {
+    setDetectingSystemSpecs(false);
+  }
 }
 
 async function copyTextReliable(text: string) {
@@ -1654,7 +3153,8 @@ async function copyTextReliable(text: string) {
 function addToFixHistory(
   type: FixHistoryItem["type"],
   title: string,
-  text: string
+  text: string,
+  analysisSummary?: FixHistoryItem["analysisSummary"]
 ) {
   const item: FixHistoryItem = {
     id: crypto.randomUUID(),
@@ -1664,11 +3164,25 @@ function addToFixHistory(
     type,
     title,
     text,
+    analysisSummary,
   };
 
   const next = pushFixHistoryItem(item);
   setFixHistoryItems(next);
 }
+
+const savedHistoryItems = useMemo(
+  () => fixHistoryItems.filter((item) => item.type !== "diagnostic_run"),
+  [fixHistoryItems]
+);
+
+const diagnosticHistoryItems = useMemo(
+  () => fixHistoryItems.filter((item) => item.type === "diagnostic_run"),
+  [fixHistoryItems]
+);
+
+const visibleHistoryItems =
+  fixHistoryTab === "saved" ? savedHistoryItems : diagnosticHistoryItems;
 
 const selectedGameProfile = useMemo(
   () => GAME_PROFILES[selectedGameKey] ?? GAME_PROFILES.minecraft,
@@ -1685,17 +3199,17 @@ const fixPlan = useMemo(
     getFixPlan(
       selectedGameKey,
       gameTitle,
-      analysis,
-      detectedSignals,
+      displayAnalysis,
+      displayDetectedSignals,
       selectedGameProfile
     ),
-  [selectedGameKey, gameTitle, analysis, detectedSignals, selectedGameProfile]
+  [selectedGameKey, gameTitle, displayAnalysis, displayDetectedSignals, selectedGameProfile]
 );
 
 const safeFixSuspects = useMemo(() => {
   const suspectsFromAnalysis =
-    analysis?.detectedSignals?.suspectedMods ||
-    detectedSignals?.suspectedMods ||
+    displayAnalysis?.detectedSignals?.suspectedMods ||
+    displayDetectedSignals?.suspectedMods ||
     [];
 
   const normalized = [...suspectsFromAnalysis, ...liveMods]
@@ -1703,15 +3217,27 @@ const safeFixSuspects = useMemo(() => {
     .filter(Boolean);
 
   return Array.from(new Set(normalized)).slice(0, 6);
-}, [analysis, detectedSignals, liveMods]);
+}, [displayAnalysis, displayDetectedSignals, liveMods]);
 
 const canApplySafeFix =
   desktopConnected &&
   Boolean(gameInstallPath) &&
   safeFixSuspects.length > 0;
 
+const hasDiagnosticResult = Boolean(displayAnalysis && result);
+const canUndoLastFix = hasDiagnosticResult && Boolean(lastFixResult?.movedFile);
+
 useEffect(() => {
 if (typeof window !== "undefined") {
+  const savedAuthorization = window.localStorage.getItem(APP_AUTH_STORAGE_KEY);
+  setHasAcceptedAuthorization(savedAuthorization === "true");
+  setCheckingAuthorization(false);
+
+  const savedSupportTelemetry = window.localStorage.getItem(
+  SUPPORT_TELEMETRY_STORAGE_KEY
+);
+setSupportTelemetryEnabled(savedSupportTelemetry === "true");
+
   let vid = window.localStorage.getItem("fmg_vid");
 
   if (!vid) {
@@ -1788,6 +3314,7 @@ const detectSelectedGameInstall = React.useCallback(async (gameKey = selectedGam
 }, [selectedGameKey]);
 
 useEffect(() => {
+  setAutoDetectStatus("idle");
   detectSelectedGameInstall(selectedGameKey);
 }, [selectedGameKey, detectSelectedGameInstall]);
 
@@ -1843,6 +3370,40 @@ useEffect(() => {
   );
 }
 
+function buildSafeFixPlanPreview(params: {
+  suspectMods: string[];
+  selectedGameKey: string;
+}) {
+  const suspectMods = Array.isArray(params.suspectMods) ? params.suspectMods : [];
+  const primarySuspect = suspectMods[0] || "the top matched suspect";
+
+  return [
+    {
+      id: "safe_fix_mods_used",
+      title: "Safe Fix: checked likely problem mods",
+      detail:
+        suspectMods.length > 0
+          ? `FixMyGame will check these suspected mods first: ${suspectMods.join(", ")}.`
+          : "FixMyGame will check the most likely suspect from your diagnostic signals.",
+    },
+    {
+      id: "safe_fix_move_candidate",
+      title: "Safe Fix: move likely problem mod",
+      detail: `FixMyGame will back up and quarantine ${primarySuspect} if it is the best safe-fix match in your Mods folder.`,
+    },
+    {
+      id: "safe_fix_backup_created",
+      title: "Safe Fix: backup created",
+      detail: "FixMyGame will create a backup before moving anything.",
+    },
+    {
+      id: "safe_fix_new_location",
+      title: "Safe Fix: new file location",
+      detail: "FixMyGame will move the matched item into its quarantine folder so the game no longer loads it.",
+    },
+  ];
+}
+
   async function applySafeFixNow() {
   setErrorMsg("");
   setFixPreviewError("");
@@ -1891,7 +3452,7 @@ useEffect(() => {
   return;
 }
 
-    const movedFile = response.movedFile || "suspected mod";
+const movedFile = response.movedFile || "suspected mod";
 
 setFixExecutionResults([
   {
@@ -1901,29 +3462,29 @@ setFixExecutionResults([
     detail:
       suspectMods.length > 0
         ? `Checked these suspected mods: ${suspectMods.join(", ")}.`
-        : "No suspected mods were listed.",
+        : "FixMyGame checked the most likely suspect from your diagnostic signals.",
   },
   {
-    id: "safe_fix_quarantine",
+    id: "safe_fix_move_candidate",
     title: "Safe Fix: moved likely problem mod",
     ok: true,
     detail: `Moved ${movedFile} to quarantine successfully.`,
   },
   {
-    id: "safe_fix_backup",
+    id: "safe_fix_backup_created",
     title: "Safe Fix: backup created",
     ok: true,
     detail: response.backupPath
       ? `Backup created at: ${response.backupPath}`
-      : "Backup was created successfully.",
+      : "Backup created before moving the matched item.",
   },
   {
-    id: "safe_fix_quarantine_path",
+    id: "safe_fix_new_location",
     title: "Safe Fix: new file location",
     ok: true,
     detail: response.quarantinePath
       ? `Stored quarantined file at: ${response.quarantinePath}`
-      : "Quarantined file location was created successfully.",
+      : "The matched item was moved into quarantine.",
   },
 ]);
 
@@ -1955,10 +3516,23 @@ showActionMessage(
 
     setFixHistoryItems(nextHistory);
     setLastFixResult({
-      file: movedFile,
-      mods: suspectMods,
-    });
+  movedFile,
+  matchedName: response.matchedName,
+  matchedSuspect: response.matchedSuspect,
+  itemType: response.itemType,
+  candidateKind: response.candidateKind,
+  backupPath: response.backupPath,
+  quarantinePath: response.quarantinePath,
+  originalPath: response.originalPath,
+  mods: suspectMods,
+});
     setShowFixFeedback(true);
+    pushSupportEvent("apply_safe_fix", `Applied safe fix for ${movedFile}`);
+await sendSupportSnapshot(
+  "apply_safe_fix",
+  `Applied safe fix for ${movedFile}`
+);
+
     await detectSelectedGameInstall(selectedGameKey);
   } catch (error) {
     setFixPreviewError(
@@ -2041,6 +3615,11 @@ showActionMessage(
     });
 
     setFixHistoryItems(nextHistory);
+    pushSupportEvent("undo_last_fix", `Undid last fix for ${restoredFile}`);
+await sendSupportSnapshot(
+  "undo_last_fix",
+  `Undid last fix for ${restoredFile}`
+);
     await detectSelectedGameInstall(selectedGameKey);
   } catch (error) {
     setErrorMsg(
@@ -2051,8 +3630,45 @@ showActionMessage(
   }
 }
 
+async function openQuarantineFolder() {
+  if (!lastFixResult?.quarantinePath) {
+    setFixPreviewError("No quarantine path is available yet.");
+    return;
+  }
+
+  try {
+    const response = await window.fixMyGame?.openFolderPath?.(lastFixResult.quarantinePath);
+
+    if (!response?.ok) {
+      setFixPreviewError(response?.error || "Could not open the quarantine folder.");
+      return;
+    }
+  } catch {
+    setFixPreviewError("Could not open the quarantine folder.");
+  }
+}
+
+async function openBackupFolder() {
+  if (!lastFixResult?.backupPath) {
+    setFixPreviewError("No backup path is available yet.");
+    return;
+  }
+
+  try {
+    const response = await window.fixMyGame?.openFolderPath?.(lastFixResult.backupPath);
+
+    if (!response?.ok) {
+      setFixPreviewError(response?.error || "Could not open the backup folder.");
+      return;
+    }
+  } catch {
+    setFixPreviewError("Could not open the backup folder.");
+  }
+}
+
   async function loadLogFromComputer() {
     setErrorMsg("");
+    setAutoDetectStatus("idle");
 
     if (!window.fixMyGame?.pickLogFile || !window.fixMyGame?.readLogFile) {
       setErrorMsg("Desktop file loading is only available inside the Electron app.");
@@ -2066,17 +3682,12 @@ showActionMessage(
       if (!filePath) return;
 
       const contents = await window.fixMyGame.readLogFile(filePath);
+      setHasAppliedAutoGameDetect(false);
       setCurrentLogPath(filePath);
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
-if (detectedGame && detectedGame !== selectedGameKey) {
-  setSelectedGameKey(detectedGame);
-  showActionMessage(
-  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-  "fixAssistant"
-);
-}
+applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -2093,6 +3704,7 @@ setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
 
 async function pickCustomScanFolder() {
   setErrorMsg("");
+  setAutoDetectStatus("idle");
 
   if (!window.fixMyGame?.pickScanFolder || !window.fixMyGame?.scanCustomFolder) {
     setErrorMsg("Folder scanning is only available inside the Electron app.");
@@ -2127,17 +3739,12 @@ const folderPath = await window.fixMyGame.pickScanFolder(defaultScanPath);
     }
 
     const contents = await window.fixMyGame.readLogFile(bestLog.fullPath);
+    setHasAppliedAutoGameDetect(false);
 setCurrentLogPath(bestLog.fullPath);
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
-if (detectedGame && detectedGame !== selectedGameKey) {
-  setSelectedGameKey(detectedGame);
-  showActionMessage(
-  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-  "fixAssistant"
-);
-}
+applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -2153,6 +3760,7 @@ await runDiagnostic(contents);
 
 async function scanLogsForSelectedGame() {
   setErrorMsg("");
+  setAutoDetectStatus("idle");
 
   if (!window.fixMyGame?.scanLogsForGame) {
     setErrorMsg("Desktop connection not detected. Restart the Electron app and try again.");
@@ -2162,6 +3770,17 @@ async function scanLogsForSelectedGame() {
   try {
     setScanningLogs(true);
 
+    let installDetected = false;
+
+      try {
+        if (window.fixMyGame?.detectGameInstall) {
+          const installResponse = await window.fixMyGame.detectGameInstall(selectedGameKey);
+          installDetected = !!installResponse?.detected;
+        }
+      } catch {
+        installDetected = false;
+      }
+
     const logs = await window.fixMyGame.scanLogsForGame(selectedGameKey);
     const normalizedLogs = Array.isArray(logs) ? logs : [];
 
@@ -2170,13 +3789,11 @@ setHasScannedLogs(true);
 
 if (normalizedLogs.length === 0) {
   setActionMsg("");
+  setAutoDetectStatus(installDetected ? "no_logs" : "not_installed");
   return;
 }
 
-showActionMessage(
-  `Found ${normalizedLogs.length} potential ${gameTitle} log file${normalizedLogs.length === 1 ? "" : "s"}.`,
-  "fixAssistant"
-);
+setAutoDetectStatus("logs_found");
 
 // AUTO-SELECT BEST LOG
 if (normalizedLogs.length > 0) {
@@ -2188,23 +3805,25 @@ if (normalizedLogs.length > 0) {
   }
 
   const contents = await window.fixMyGame.readLogFile(bestLog.fullPath);
+  setHasAppliedAutoGameDetect(false);
   setCurrentLogPath(bestLog.fullPath);
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
-if (detectedGame && detectedGame !== selectedGameKey) {
-  setSelectedGameKey(detectedGame);
-  showActionMessage(
-  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-  "fixAssistant"
-);
-}
+applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
 setLogHighlights(extractLogHighlights(contents, activeGameKey));
 setLiveMods(extractModsFromLog(contents, activeGameKey));
 setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
+
+showActionMessage(
+  buildLoadedLogSummary({
+    crashLog: contents,
+  }) || `Loaded latest ${gameTitle} log.`,
+  "fixAssistant"
+);
 
 await runDiagnostic(contents);
 }
@@ -2218,6 +3837,7 @@ await runDiagnostic(contents);
 
 async function loadDetectedLog(fullPath: string) {
   setErrorMsg("");
+  setAutoDetectStatus("idle");
 
   if (!window.fixMyGame?.readLogFile) {
     setErrorMsg("Desktop file loading is only available inside the Electron app.");
@@ -2227,18 +3847,13 @@ async function loadDetectedLog(fullPath: string) {
   try {
     setLoadingDesktopLog(true);
 
-    const contents = await window.fixMyGame.readLogFile(fullPath);
+const contents = await window.fixMyGame.readLogFile(fullPath);
+setHasAppliedAutoGameDetect(false);
 setCurrentLogPath(fullPath);
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
-if (detectedGame && detectedGame !== selectedGameKey) {
-  setSelectedGameKey(detectedGame);
-  showActionMessage(
-  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-  "fixAssistant"
-);
-}
+applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -2253,15 +3868,27 @@ setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
   }
 }
 
-async function openModsFolder(silent = false) {
+async function openModsFolder(
+  silent = false,
+  errorTarget: "top" | "quickActions" = "top"
+) {
   if (!silent) {
-    setErrorMsg("");
-    setActionMsg("");
+  setErrorMsg("");
+  setActionMsg("");
+  if (errorTarget === "top") {
+    setFolderActionError("");
+  } else {
+    setQuickActionFolderError("");
   }
+}
 
   if (!window.fixMyGame?.openModsFolder) {
     if (!silent) {
-      setErrorMsg("Open Mods Folder is only available inside the Electron app.");
+      if (errorTarget === "top") {
+  setTimedError(setFolderActionError, "Open Mods Folder is only available inside the Electron app.");
+} else {
+  setTimedError(setQuickActionFolderError, "Open Mods Folder is only available inside the Electron app.");
+}
     }
     return false;
   }
@@ -2274,15 +3901,31 @@ async function openModsFolder(silent = false) {
 
       if (!silent) {
         if (error.includes("not found") || error.includes("no such file")) {
-          setErrorMsg(`No ${gameTitle} installation detected on this device.`);
+          if (errorTarget === "top") {
+            setFolderActionError(`No ${gameTitle} installation detected on this device.`);
+          } else {
+            setQuickActionFolderError(`No ${gameTitle} installation detected on this device.`);
+          }
         } else if (error.includes("empty") || error.includes("no mods")) {
-          setErrorMsg(
-            `${gameTitle} is installed, but no mods folder was found or it is empty.`
-          );
+          if (errorTarget === "top") {
+  setTimedError(setFolderActionError, 
+    `${gameTitle} is installed, but no mods folder was found or it is empty.`
+  );
+} else {
+  setTimedError(setQuickActionFolderError,
+    `${gameTitle} is installed, but no mods folder was found or it is empty.`
+  );
+}
         } else {
-          setErrorMsg(
-            response?.error || `Could not open the ${gameTitle} mods folder.`
-          );
+          if (errorTarget === "top") {
+            setTimedError(setFolderActionError,
+              response?.error || `Could not open the ${gameTitle} mods folder.`
+            );
+          } else {
+            setTimedError(setQuickActionFolderError,
+              response?.error || `Could not open the ${gameTitle} mods folder.`
+            );
+          }
         }
       }
 
@@ -2303,22 +3946,38 @@ async function openModsFolder(silent = false) {
         error instanceof Error
           ? error.message
           : `Failed to open the ${gameTitle} mods folder.`;
-      setErrorMsg(msg);
+      if (errorTarget === "top") {
+  setFolderActionError(msg);
+} else {
+  setQuickActionFolderError(msg);
+}
     }
 
     return false;
   }
 }
 
-async function openLogsFolder(silent = false) {
+async function openLogsFolder(
+  silent = false,
+  errorTarget: "top" | "quickActions" = "top"
+) {
   if (!silent) {
-    setErrorMsg("");
-    setActionMsg("");
+  setErrorMsg("");
+  setActionMsg("");
+  if (errorTarget === "top") {
+    setFolderActionError("");
+  } else {
+    setQuickActionFolderError("");
   }
+}
 
   if (!window.fixMyGame?.openLogsFolder) {
     if (!silent) {
-      setErrorMsg("Open Logs Folder is only available inside the Electron app.");
+      if (errorTarget === "top") {
+  setTimedError(setFolderActionError, "Open Logs Folder is only available inside the Electron app.");
+} else {
+  setTimedError(setQuickActionFolderError, "Open Logs Folder is only available inside the Electron app.");
+}
     }
     return false;
   }
@@ -2331,15 +3990,31 @@ async function openLogsFolder(silent = false) {
 
       if (!silent) {
         if (error.includes("not found") || error.includes("no such file")) {
-          setErrorMsg(`No ${gameTitle} installation detected on this device.`);
+          if (errorTarget === "top") {
+  setTimedError(setFolderActionError, `No ${gameTitle} installation detected on this device.`);
+} else {
+  setTimedError(setQuickActionFolderError, `No ${gameTitle} installation detected on this device.`);
+}
         } else if (error.includes("empty") || error.includes("no logs")) {
-          setErrorMsg(
-            `${gameTitle} is installed, but no crash logs were found yet. Launch the game once or generate a crash.`
-          );
+          if (errorTarget === "top") {
+  setTimedError(setFolderActionError,
+    `${gameTitle} is installed, but no crash logs were found yet. Launch the game once or generate a crash.`
+  );
+} else {
+  setTimedError(setQuickActionFolderError,
+    `${gameTitle} is installed, but no crash logs were found yet. Launch the game once or generate a crash.`
+  );
+}
         } else {
-          setErrorMsg(
-            response?.error || `Could not open the ${gameTitle} logs folder.`
-          );
+          if (errorTarget === "top") {
+  setTimedError(setFolderActionError,
+    response?.error || `Could not open the ${gameTitle} logs folder.`
+  );
+} else {
+  setTimedError(setQuickActionFolderError,
+    response?.error || `Could not open the ${gameTitle} logs folder.`
+  );
+}
         }
       }
 
@@ -2357,10 +4032,130 @@ async function openLogsFolder(silent = false) {
         error instanceof Error
           ? error.message
           : `Failed to open the ${gameTitle} logs folder.`;
-      setErrorMsg(msg);
+      if (errorTarget === "top") {
+  setFolderActionError(msg);
+} else {
+  setQuickActionFolderError(msg);
+}
     }
 
     return false;
+  }
+}
+
+function pushSupportEvent(type: string, detail?: string) {
+  setSupportEventHistory((prev) => [
+    ...prev,
+    {
+      id: crypto.randomUUID(),
+      type,
+      createdAt: new Date().toISOString(),
+      detail,
+    },
+  ]);
+}
+
+function buildSupportSnapshot(params?: {
+  eventType?: string;
+  eventDetail?: string;
+}) {
+  return {
+    createdAt: new Date().toISOString(),
+    sessionId: supportSessionId,
+    appVersion: "1.0.0",
+    eventType: params?.eventType || "manual_snapshot",
+    eventDetail: params?.eventDetail || "",
+    consent: {
+      supportTelemetryEnabled,
+      authorizationAccepted: hasAcceptedAuthorization,
+    },
+    game: {
+      key: selectedGameKey,
+      title: gameTitle,
+    },
+    system: {
+      gpuModel,
+      driverVersion,
+      graphicsApiMode,
+    },
+    paths: {
+      currentLogPath,
+      gameInstallPath,
+      gameInstallDetected,
+      backupPath: lastFixResult?.backupPath || "",
+      quarantinePath: lastFixResult?.quarantinePath || "",
+      originalPath: lastFixResult?.originalPath || "",
+    },
+    diagnostic: {
+      crashLog,
+      quickSignals,
+      logHighlights,
+      liveMods,
+      mostSuspiciousLine,
+      detectedSignals: displayDetectedSignals,
+      analysis: displayAnalysis,
+      smartFixPath,
+      result,
+      loadedLogSummary,
+    },
+    continuation: {
+      continuedDiagnosticBase,
+      diagnosticRefineMode,
+      diagnosticRefineText,
+      additionalRefineLog,
+      showDiagnosticRefineBox,
+      resultFollowupMessage,
+      resultFollowupTone,
+    },
+    safeFix: {
+      fixExecutionResults,
+      lastFixResult,
+      showFixFeedback,
+    },
+    limits: {
+      isPro,
+      remaining,
+      limit,
+    },
+    ui: {
+      desktopConnected,
+      betaOpen,
+      betaMessage,
+      checkingInstall,
+      running,
+      scanningLogs,
+      loadingDesktopLog,
+      applyingSafeFix,
+      undoingSafeFix,
+      runningFixPlan,
+    },
+    supportEvents: [
+      ...supportEventHistory,
+      {
+        id: crypto.randomUUID(),
+        type: params?.eventType || "manual_snapshot",
+        createdAt: new Date().toISOString(),
+        detail: params?.eventDetail || "",
+      },
+    ],
+  };
+}
+
+async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
+  if (!supportTelemetryEnabled) return;
+
+  try {
+    const snapshot = buildSupportSnapshot({
+      eventType,
+      eventDetail,
+    });
+
+    await fetchJSON<{ ok: boolean }>(`${API_BASE_URL}/api/support-snapshot`, {
+      method: "POST",
+      body: JSON.stringify(snapshot),
+    });
+  } catch {
+    // silent by design
   }
 }
 
@@ -2378,6 +4173,11 @@ if (typeof logToUse !== "string" || !logToUse.trim()) {
   return;
 }
 
+if (!betaOpen) {
+  setErrorMsg(betaMessage || "The FixMyGame beta period has ended.");
+  return;
+}
+
     if (!canRun) {
       setErrorMsg("Daily limit reached. Upgrade to Pro for unlimited diagnostics.");
       return;
@@ -2386,23 +4186,93 @@ if (typeof logToUse !== "string" || !logToUse.trim()) {
     setRunning(true);
     try {
       const payload = {
-        gameKey: selectedGameKey,
-        gameTitle,
-        gpuModel,
-        driverVersion,
-        graphicsApiMode,
-        crashLog: logToUse,
-        mostSuspiciousLine,
-      };
+  gameKey: selectedGameKey,
+  gameTitle,
+  gpuModel,
+  driverVersion,
+  graphicsApiMode,
+  crashLog: logToUse,
+  mostSuspiciousLine,
+  quickSignals,
+  logHighlights,
+  liveMods,
+  currentLogPath,
+  resultRefinement:
+  showDiagnosticRefineBox && diagnosticRefineMode
+    ? {
+        mode: diagnosticRefineMode,
+        userMessage: diagnosticRefineText.trim(),
+      }
+    : null,
+  continuedDiagnostic: continuedDiagnosticBase
+    ? {
+        title: continuedDiagnosticBase.title,
+        gameKey: continuedDiagnosticBase.gameKey,
+        gameTitle: continuedDiagnosticBase.gameTitle,
+        issue: continuedDiagnosticBase.analysisSummary?.issue || "",
+        quickFixFirst:
+          continuedDiagnosticBase.analysisSummary?.quickFixFirst || "",
+        mostLikelyCause:
+          continuedDiagnosticBase.analysisSummary?.mostLikelyCause || "",
+        needMoreInfo:
+          continuedDiagnosticBase.analysisSummary?.needMoreInfo || "",
+        likelyCategory:
+          continuedDiagnosticBase.analysisSummary?.likelyCategory || "",
+        suspectedMods:
+          continuedDiagnosticBase.analysisSummary?.suspectedMods || [],
+        previousText: continuedDiagnosticBase.text,
+        previousRelevantLog:
+          continuedDiagnosticBase.analysisSummary?.previousRelevantLog || "",
+      }
+    : null,
+};
 
       const data = await fetchJSON<AnalyzeResponse>(`${API_BASE_URL}/api/analyze`, {
   method: "POST",
   body: JSON.stringify(payload),
 });
 
-setResult(data.result || "");
-setAnalysis(data.analysis ?? null);
-setDetectedSignals(data.detectedSignals ?? null);
+const nextResult = data.result || "";
+const nextAnalysis = data.analysis ?? null;
+const nextDetectedSignals = data.detectedSignals ?? null;
+
+setResult(nextResult);
+setAnalysis(nextAnalysis);
+setDetectedSignals(nextDetectedSignals);
+setShowDiagnosticRefineBox(false);
+setDiagnosticRefineMode(null);
+setDiagnosticRefineText("");
+setShowAdditionalRefineLogBox(false);
+setAdditionalRefineLog("");
+
+const diagnosticHistoryText = buildDiagnosticResultText(
+  nextAnalysis,
+  nextResult
+);
+
+if (diagnosticHistoryText.trim()) {
+  addToFixHistory(
+  "diagnostic_run",
+  `${gameTitle} diagnostic run`,
+  diagnosticHistoryText,
+  {
+    issue: nextAnalysis?.issue,
+    quickFixFirst: nextAnalysis?.quickFixFirst,
+    mostLikelyCause: nextAnalysis?.mostLikelyCause,
+    needMoreInfo: nextAnalysis?.needMoreInfo,
+    likelyCategory:
+      nextAnalysis?.detectedSignals?.likelyCategory ||
+      nextDetectedSignals?.likelyCategory,
+    suspectedMods:
+      nextAnalysis?.detectedSignals?.suspectedMods ||
+      nextDetectedSignals?.suspectedMods ||
+      [],
+    previousRelevantLog: logToUse,
+  }
+);
+pushSupportEvent("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
+await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
+}
 
       const lim = await fetchJSON<LimitResponse>(`${API_BASE_URL}/api/limit`, { method: "GET" });
       setIsPro(Boolean(lim.isPro));
@@ -2435,27 +4305,36 @@ async function upgradeToPro() {
     alert("Checkout failed.");
   }
 }
+function buildDiagnosticResultText(
+  analysisValue: AnalyzeResponse["analysis"] | null,
+  resultValue: string
+) {
+  return analysisValue
+    ? [
+        "Quick Fix First:",
+        analysisValue.quickFixFirst,
+        "",
+        `Issue: ${analysisValue.issue}`,
+        `Confidence Level: ${analysisValue.confidenceLevel}`,
+        "Probability Breakdown:",
+        ...analysisValue.probabilityBreakdown.map((item) => `- ${item}`),
+        `Most Likely Cause: ${analysisValue.mostLikelyCause}`,
+        "Recommended Fix Steps:",
+        ...analysisValue.recommendedFixSteps.map(
+          (step, index) => `${index + 1}. ${step}`
+        ),
+        `Need More Info: ${analysisValue.needMoreInfo}`,
+      ].join("\n")
+    : resultValue;
+}
+
 async function saveResult() {
   if (!window.fixMyGame?.saveAnalysis) {
     setErrorMsg("Save is only available inside the Electron app.");
     return;
   }
 
-  const textToSave = analysis
-    ? [
-        "Quick Fix First:",
-        analysis.quickFixFirst,
-        "",
-        `Issue: ${analysis.issue}`,
-        `Confidence Level: ${analysis.confidenceLevel}`,
-        "Probability Breakdown:",
-        ...analysis.probabilityBreakdown.map((item) => `- ${item}`),
-        `Most Likely Cause: ${analysis.mostLikelyCause}`,
-        "Recommended Fix Steps:",
-        ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
-        `Need More Info: ${analysis.needMoreInfo}`,
-      ].join("\n")
-    : result;
+  const textToSave = buildDiagnosticResultText(displayAnalysis, result);
 
   if (!textToSave.trim()) return;
 
@@ -2481,21 +4360,7 @@ setTimeout(() => {
 }
 
 async function copyResult() {
-  const textToCopy = analysis
-    ? [
-        "Quick Fix First:",
-        analysis.quickFixFirst,
-        "",
-        `Issue: ${analysis.issue}`,
-        `Confidence Level: ${analysis.confidenceLevel}`,
-        "Probability Breakdown:",
-        ...analysis.probabilityBreakdown.map((item) => `- ${item}`),
-        `Most Likely Cause: ${analysis.mostLikelyCause}`,
-        "Recommended Fix Steps:",
-        ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
-        `Need More Info: ${analysis.needMoreInfo}`,
-      ].join("\n")
-    : result;
+  const textToCopy = buildDiagnosticResultText(displayAnalysis, result);
 
   if (!textToCopy.trim()) return;
 
@@ -2521,17 +4386,30 @@ setTimeout(() => {
   }
 }
 
+function resetSavedSystemPrefs() {
+  try {
+    localStorage.removeItem(SYSTEM_PREFS_STORAGE_KEY);
+  } catch {
+    // ignore storage errors
+  }
+
+  setSelectedGameKey("minecraft");
+  setGpuModel("");
+  setDriverVersion("");
+  setGraphicsApiMode("Auto Detect");
+}
+
 async function applyQuickFix() {
-  if (!analysis) {
+  if (!displayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
 
   const quickFixText = [
-    `Quick Fix First: ${analysis.quickFixFirst}`,
+    `Quick Fix First: ${displayAnalysis.quickFixFirst}`,
     "",
     "Recommended Fix Steps:",
-    ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
+    ...displayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
   ].join("\n");
 
   addToFixHistory("quick_fix", `${gameTitle} quick fix`, quickFixText);
@@ -2550,7 +4428,7 @@ async function applyQuickFix() {
   }
 }
 async function runFixPlan() {
-  if (!fixPlan || !analysis) {
+  if (!fixPlan || !displayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
@@ -2606,10 +4484,10 @@ async function runFixPlan() {
 
     if (action.type === "copy_fix_steps") {
       const quickFixText = [
-        `Quick Fix First: ${analysis.quickFixFirst}`,
+        `Quick Fix First: ${displayAnalysis.quickFixFirst}`,
         "",
         "Recommended Fix Steps:",
-        ...analysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
+        ...displayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
       ].join("\n");
 
       try {
@@ -2643,7 +4521,7 @@ async function runFixPlan() {
 }
 
 function openStepByStepGuide() {
-  if (!analysis) {
+  if (!displayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
@@ -2847,31 +4725,48 @@ async function openGameSettingsQuickAction() {
 </span>
 </div>
 
-<div className="mt-3 p-3 rounded-lg bg-white/5 text-xs leading-relaxed break-words">
-  <div><strong>Local vid:</strong> {debugVid || "none"}</div>
-  <div><strong>Server debug:</strong> {debugProStatus || "loading..."}</div>
-  <div>
-    <strong>Install detection:</strong>{" "}
-    {checkingInstall
-      ? "checking..."
-      : gameInstallDetected
-      ? gameInstallPath || "detected"
-      : "not detected"}
+{process.env.NODE_ENV !== "production" ? (
+  <div className="mt-3 p-3 rounded-lg bg-white/5 text-xs leading-relaxed break-words">
+    <div><strong>Local vid:</strong> {debugVid || "none"}</div>
+    <div><strong>Server debug:</strong> {debugProStatus || "loading..."}</div>
+    <div>
+      <strong>Install detection:</strong>{" "}
+      {checkingInstall
+        ? "checking..."
+        : gameInstallDetected
+        ? gameInstallPath || "detected"
+        : "not detected"}
+    </div>
   </div>
-</div>
+) : null}
 
-      <section className="mt-10 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
-          <Field label="SELECTED GAME">
+<section className="mt-10 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
+<Field label="SELECTED GAME">
   <DarkSelect
-  value={gameTitle}
-  options={GAME_PRESETS.map((g) => g.label)}
-  onChange={(label) => {
-    const match = GAME_PRESETS.find((g) => g.label === label);
-    if (match) setSelectedGameKey(match.key);
-  }}
-/>
+    value={gameTitle}
+    options={SORTED_GAME_PRESETS.map((g) => g.label)}
+    onChange={(label) => {
+  const match = SORTED_GAME_PRESETS.find((g) => g.label === label);
+  if (match) {
+    setSelectedGameKey(match.key);
+    setHasAppliedAutoGameDetect(true);
+  }
+}}
+  />
 </Field>
 
+<div className="mt-3 flex justify-end">
+  <button
+    type="button"
+    onClick={autoFillSystemSpecs}
+    disabled={detectingSystemSpecs}
+    className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {detectingSystemSpecs ? "Detecting..." : "Auto-Fill System Info"}
+  </button>
+</div>
+
+        <div className="-mt-7">
           <Field label="GPU MODEL">
             <input
               className="w-full rounded-xl border border-white/10 bg-[#0b1220] text-white px-4 py-3 outline-none focus:border-white/20 appearance-none"
@@ -2881,6 +4776,7 @@ async function openGameSettingsQuickAction() {
               placeholder="RTX 3070 / RX 6800"
             />
           </Field>
+          </div>
 
           <Field label="DRIVER VERSION">
             <input
@@ -2892,7 +4788,7 @@ async function openGameSettingsQuickAction() {
             />
           </Field>
 
-          <Field label="GRAPHICS API MODE">
+<Field label="GRAPHICS API MODE">
   <DarkSelect
     value={graphicsApiMode}
     options={["Auto Detect", "DirectX 11", "DirectX 12", "Vulkan", "OpenGL"]}
@@ -2900,7 +4796,7 @@ async function openGameSettingsQuickAction() {
   />
 </Field>
 
-          <div className="mt-3 flex flex-wrap gap-3">
+<div className="mt-3 flex flex-wrap gap-3">
   <button
     type="button"
     onClick={loadLogFromComputer}
@@ -2959,6 +4855,12 @@ onClick={() => {
 </button>
 </div>
 
+{actionMsg && actionMsgLocation === "fixAssistant" ? (
+  <div className="mt-3 mb-3 rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">
+    {actionMsg}
+  </div>
+) : null}
+
 {detectedLogs.length > 0 ? (
   <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4">
     <div className="text-xs font-semibold tracking-widest text-white/70">
@@ -3010,9 +4912,33 @@ onClick={() => {
 ) : null}
 </div>
 
+{folderActionError ? (
+  <div className="mt-3 rounded-xl border border-rose-500/30 bg-rose-950/40 p-3 text-sm text-rose-100">
+    {folderActionError}
+  </div>
+) : null}
+
+{selectedGameProfile.supportsAutoDetect &&
+ !crashLog.trim() &&
+ !errorMsg &&
+ hasScannedLogs &&
+ (autoDetectStatus === "no_logs" || autoDetectStatus === "not_installed") ? (
+  <div className="mt-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/70">
+    No log loaded yet. Some games only create a fresh log after you launch the game at least once this session.
+  </div>
+) : null}
+
 {hasScannedLogs && detectedLogs.length === 0 ? (
   <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/70">
-    No {gameTitle} logs were found in the detected folders yet. Try &ldquo;Load Crash Log From Computer&rdquo; or &ldquo;Scan Entire Folder&rdquo;.
+    {autoDetectStatus === "not_installed" ? (
+      <>
+        {gameTitle} does not appear to be installed on this device yet. Install it first, or use &ldquo;Load Crash Log From Computer&rdquo; or &ldquo;Scan Entire Folder&rdquo; if your logs are stored somewhere custom.
+      </>
+    ) : (
+      <>
+        No {gameTitle} logs were found in the detected folders yet. {gameTitle} may be installed, but no logs have been created yet. Try &ldquo;Load Crash Log From Computer&rdquo; or &ldquo;Scan Entire Folder&rdquo;.
+      </>
+    )}
   </div>
 ) : null}
 
@@ -3025,20 +4951,18 @@ onClick={() => {
               className="min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono text-sm outline-none focus:border-white/20"
               value={crashLog}
               onChange={(e) => {
-  const value = e.target.value;
-setCrashLog(value);
-setCurrentLogPath("");
+              const value = e.target.value;
+              setCrashLog(value);
+              if (!crashLog.trim() && value.trim()) {
+                setHasAppliedAutoGameDetect(false);
+              }
+              setCurrentLogPath("");
+              setAutoDetectStatus("idle");
 
 const detectedGame = detectGameFromLog(value);
 const activeGameKey = detectedGame || selectedGameKey;
 
-if (detectedGame && detectedGame !== selectedGameKey) {
-  setSelectedGameKey(detectedGame);
-  showActionMessage(
-  `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-  "fixAssistant"
-);
-}
+applyDetectedGameOnce(detectedGame);
 
 if (value.trim().length > 40) {
   setQuickSignals(quickDetect(value, activeGameKey));
@@ -3066,13 +4990,24 @@ if (value.trim().length > 40) {
             />
           </Field>
           <div className="mt-4 space-y-3">
-  {quickSignals.loader || quickSignals.java || quickSignals.issue || quickSignals.error ? (
+  {quickSignals.status || quickSignals.session || quickSignals.loader || quickSignals.java || quickSignals.issue || quickSignals.error ? (
     <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
       <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
         LIVE DETECTION
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
+                {quickSignals.status ? (
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
+            Status: {quickSignals.status}
+          </span>
+        ) : null}
+
+        {quickSignals.session ? (
+          <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+            Session: {quickSignals.session}
+          </span>
+        ) : null}
         {quickSignals.loader ? (
           <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-200">
             {getLoaderLabelForGame(selectedGameKey)}: {quickSignals.loader}
@@ -3101,23 +5036,27 @@ if (value.trim().length > 40) {
   ) : null}
 
   {logHighlights.length > 0 ? (
-    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-      <div className="text-xs font-semibold tracking-widest text-white/70">
-        LOG HIGHLIGHTS
-      </div>
+  <details className="group rounded-2xl border border-white/10 bg-black/20 p-4">
+    <summary className="cursor-pointer list-none flex items-center justify-between text-xs font-semibold tracking-widest text-white/70">
+  <span>LOG HIGHLIGHTS</span>
 
-      <div className="mt-3 grid gap-2">
-        {logHighlights.map((line, index) => (
-          <div
-            key={`${index}-${line}`}
-            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white/85 whitespace-pre-wrap break-words overflow-hidden"
-          >
-            {line}
-          </div>
-        ))}
-      </div>
+  <span className="text-white/40 text-sm transition-transform duration-200 group-open:rotate-180">
+    ▼
+  </span>
+</summary>
+
+    <div className="mt-3 grid gap-2">
+      {logHighlights.map((line, index) => (
+        <div
+          key={`${index}-${line}`}
+          className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 font-mono text-sm text-white/85 whitespace-pre-wrap break-words overflow-hidden"
+        >
+          {line}
+        </div>
+      ))}
     </div>
-  ) : null}
+  </details>
+) : null}
 
   {liveMods.length > 0 ? (
     <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -3152,6 +5091,36 @@ if (value.trim().length > 40) {
 </div>
 
         <div className="mt-6">
+          {continuedDiagnosticBase ? (
+  <div className="mb-3 rounded-xl border border-cyan-400/15 bg-cyan-400/5 px-4 py-3">
+    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+      CONTINUING DIAGNOSTIC
+    </div>
+
+    <div className="mt-1 text-sm text-white">
+      Using previous result:{" "}
+      <span className="font-semibold">{continuedDiagnosticBase.title}</span>
+    </div>
+
+    <div className="mt-1 text-xs text-white/60">
+      {continuedDiagnosticBase.analysisSummary?.issue ||
+        "Previous diagnostic loaded as comparison base."}
+    </div>
+
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => {
+          setContinuedDiagnosticBase(null);
+          showActionMessage("Continuation mode cleared.", "diagnostic");
+        }}
+        className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80 transition hover:bg-white/10 hover:text-white"
+      >
+        Clear Continuation
+      </button>
+    </div>
+  </div>
+) : null}
           <button
   id="run-diagnostic-button"
   className={[
@@ -3172,6 +5141,12 @@ if (value.trim().length > 40) {
     `Run ${gameTitle} Diagnostic`
   )}
 </button>
+
+{actionMsg && actionMsgLocation === "diagnostic" ? (
+  <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
+    {actionMsg}
+  </div>
+) : null}
 
           <div className="mt-2 flex items-center justify-between text-sm text-white/70">
             <div>
@@ -3219,7 +5194,7 @@ if (value.trim().length > 40) {
   <button
     type="button"
     onClick={applyQuickFix}
-    disabled={!analysis}
+    disabled={!hasDiagnosticResult}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
     ⚡ Copy Recommended Fix
@@ -3228,7 +5203,7 @@ if (value.trim().length > 40) {
     <button
     type="button"
     onClick={openStepByStepGuide}
-    disabled={!analysis}
+    disabled={!hasDiagnosticResult}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
     🧭 View Step-by-Step Guide
@@ -3241,11 +5216,10 @@ if (value.trim().length > 40) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
-  setFixExecutionResults([]);
   setFixPreviewError("");
   setShowFixPreviewModal(true);
 }}
-    disabled={!analysis || !fixPlan}
+    disabled={!hasDiagnosticResult || !fixPlan}
     className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
   >
     🛠️ Fix This for Me
@@ -3254,7 +5228,7 @@ if (value.trim().length > 40) {
 <button
   type="button"
   onClick={undoLastSafeFix}
-  disabled={undoingSafeFix}
+  disabled={!canUndoLastFix || undoingSafeFix}
   className="w-full rounded-2xl border border-white/10 bg-slate-950/40 px-5 py-4 text-left text-white transition hover:bg-slate-900/70 disabled:cursor-not-allowed disabled:opacity-60"
 >
   {undoingSafeFix ? "↩ Undoing Last Fix..." : "↩ Undo Last Fix"}
@@ -3281,12 +5255,6 @@ if (value.trim().length > 40) {
     FixMyGame can guide you through a fix or safely handle simple fixes for you.
   </div>
 </div>
-
-{actionMsg && actionMsgLocation === "fixAssistant" ? (
-  <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
-    {actionMsg}
-  </div>
-) : null}
 
 {fixExecutionResults.length > 0 ? (
   <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
@@ -3318,6 +5286,35 @@ if (value.trim().length > 40) {
         </div>
       ))}
     </div>
+
+    <div className="mt-4 flex flex-wrap justify-end gap-2">
+  <button
+    type="button"
+    onClick={openBackupFolder}
+    disabled={!lastFixResult?.backupPath}
+    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    Open Backup Folder
+  </button>
+
+  <button
+    type="button"
+    onClick={openQuarantineFolder}
+    disabled={!lastFixResult?.quarantinePath}
+    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    Open Quarantine Folder
+  </button>
+
+  <button
+    type="button"
+    onClick={undoLastSafeFix}
+    disabled={undoingSafeFix}
+    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {undoingSafeFix ? "Undoing..." : "Undo Last Fix"}
+  </button>
+</div>
   </div>
 ) : null}
 
@@ -3372,44 +5369,44 @@ if (value.trim().length > 40) {
         </div>
       </section>
 
-{detectedSignals ? (
+{displayDetectedSignals ? (
   <section className="mt-6 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.45)] p-5">
     <div className="text-xs font-semibold tracking-widest text-white/70">
       DETECTED SIGNALS
     </div>
 
     <div className="mt-4 flex flex-wrap gap-2">
-      {detectedSignals.likelyCategory ? (
+      {displayDetectedSignals.likelyCategory ? (
   <span className="rounded-full border border-orange-400/20 bg-orange-400/10 px-3 py-1 text-xs font-medium text-orange-200">
-    {formatCategoryLabel(detectedSignals.likelyCategory, selectedGameKey)}
+    {formatCategoryLabel(displayDetectedSignals.likelyCategory, selectedGameKey)}
   </span>
 ) : null}
 
-      {detectedSignals.loader ? (
+      {displayDetectedSignals.loader ? (
   <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-200">
-    {getLoaderLabelForGame(selectedGameKey)}: {formatLoaderLabel(detectedSignals.loader)}
+    {getLoaderLabelForGame(selectedGameKey)}: {formatLoaderLabel(displayDetectedSignals.loader)}
   </span>
 ) : null}
 
-      {detectedSignals.gameVersion ? (
+      {displayDetectedSignals.gameVersion ? (
         <span className="rounded-full border border-fuchsia-400/20 bg-fuchsia-400/10 px-3 py-1 text-xs font-medium text-fuchsia-200">
-          {getVersionLabelForGame(selectedGameKey)} {detectedSignals.gameVersion}
+          {getVersionLabelForGame(selectedGameKey)} {displayDetectedSignals.gameVersion}
         </span>
       ) : null}
 
-      {detectedSignals.javaVersion && getJavaLabelForGame(selectedGameKey) ? (
+      {displayDetectedSignals.javaVersion && getJavaLabelForGame(selectedGameKey) ? (
   <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
-    {getJavaLabelForGame(selectedGameKey)} {detectedSignals.javaVersion}
+    {getJavaLabelForGame(selectedGameKey)} {displayDetectedSignals.javaVersion}
   </span>
 ) : null}
 
-      {detectedSignals.errorType ? (
+      {displayDetectedSignals.errorType ? (
         <span className="rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1 text-xs font-medium text-red-200">
-          {detectedSignals.errorType}
+          {displayDetectedSignals.errorType}
         </span>
       ) : null}
 
-      {detectedSignals.suspectedMods?.map((mod) => (
+      {displayDetectedSignals.suspectedMods?.map((mod) => (
         <span
           key={mod}
           className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80"
@@ -3427,7 +5424,7 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
 
-{analysis ? (
+{displayAnalysis ? (
   <section className="mt-6 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.45)] p-5">
     <div className="text-xs font-semibold tracking-widest text-white/70">
       SMART FIX PATH
@@ -3450,7 +5447,7 @@ if (value.trim().length > 40) {
         ))}
       </ul>
     </div>
-    {analysis ? (
+    {displayAnalysis ? (
   <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4">
     <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
       QUICK ACTIONS
@@ -3461,7 +5458,7 @@ if (value.trim().length > 40) {
     <button
       type="button"
       onClick={() => {
-  openModsFolder();
+  openModsFolder(false, "quickActions");
 }}
       className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
     >
@@ -3473,7 +5470,7 @@ if (value.trim().length > 40) {
     <button
       type="button"
       onClick={() => {
-  openLogsFolder();
+  openLogsFolder(false, "quickActions");
 }}
       className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
     >
@@ -3484,12 +5481,12 @@ if (value.trim().length > 40) {
   <button
     type="button"
     onClick={async () => {
-            const modsText =
-        detectedSignals?.suspectedMods?.length
-          ? detectedSignals.suspectedMods.join(", ")
-          : liveMods.length
-          ? liveMods.join(", ")
-          : "No suspected mods detected.";
+const modsText =
+  displayDetectedSignals?.suspectedMods?.length
+    ? displayDetectedSignals.suspectedMods.join(", ")
+    : liveMods.length
+    ? liveMods.join(", ")
+    : "No suspected mods detected.";
 
       addToFixHistory("suspected_mods", `${gameTitle} suspected mods`, modsText);
 
@@ -3525,17 +5522,16 @@ setTimeout(() => {
 </div>
   </div>
 ) : null}
+{quickActionFolderError ? (
+  <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-950/40 p-3 text-sm text-rose-100">
+    {quickActionFolderError}
+  </div>
+) : null}
   </section>
 ) : null}
 
-{actionMsg && actionMsgLocation === "diagnostic" ? (
-  <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-4 text-sm text-emerald-100">
-    {actionMsg}
-  </div>
-) : null}
-
 <section className="mt-6">
-  {analysis ? (
+  {displayAnalysis ? (
     <div className="rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-semibold tracking-widest text-white/70">
@@ -3581,7 +5577,7 @@ setTimeout(() => {
           </div>
 <div className="mt-2 text-lg font-semibold text-white tracking-wide flex items-center gap-2">
   <span className="text-yellow-300">⚡</span>
-  {analysis.quickFixFirst}
+  {displayAnalysis.quickFixFirst}
 </div>
         </div>
 
@@ -3590,7 +5586,7 @@ setTimeout(() => {
             <div className="text-xs font-semibold tracking-widest text-white/60">
               ISSUE
             </div>
-            <div className="mt-2 text-white">{analysis.issue}</div>
+            <div className="mt-2 text-white">{displayAnalysis.issue}</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -3600,14 +5596,14 @@ setTimeout(() => {
 <div
   className={[
     "mt-2 inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold",
-    analysis.confidenceLevel === "High"
+    displayAnalysis.confidenceLevel === "High"
       ? "bg-green-500/20 text-green-300"
-      : analysis.confidenceLevel === "Medium"
+      : displayAnalysis.confidenceLevel === "Medium"
       ? "bg-yellow-500/20 text-yellow-300"
       : "bg-red-500/20 text-red-300",
   ].join(" ")}
 >
-  {analysis.confidenceLevel}
+  {displayAnalysis.confidenceLevel}
 </div>          </div>
         </div>
 
@@ -3616,7 +5612,7 @@ setTimeout(() => {
             PROBABILITY BREAKDOWN
           </div>
           <ul className="mt-3 grid gap-2 text-white/90">
-            {analysis.probabilityBreakdown.map((item, index) => {
+            {displayAnalysis.probabilityBreakdown.map((item, index) => {
   const formatted = formatProbabilityItem(item, index);
 
   return (
@@ -3643,7 +5639,7 @@ setTimeout(() => {
           <div className="text-xs font-semibold tracking-widest text-white/60">
             MOST LIKELY CAUSE
           </div>
-          <div className="mt-2 text-white">{analysis.mostLikelyCause}</div>
+          <div className="mt-2 text-white">{displayAnalysis.mostLikelyCause}</div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -3651,7 +5647,7 @@ setTimeout(() => {
             RECOMMENDED FIX STEPS
           </div>
           <ol className="mt-3 grid gap-2 text-white/90">
-            {analysis.recommendedFixSteps.map((step, index) => (
+            {displayAnalysis.recommendedFixSteps.map((step, index) => (
               <li key={`${index}-${step}`} className="rounded-xl bg-white/5 px-3 py-2">
                 <span className="mr-2 font-semibold text-white">{index + 1}.</span>
                 {step}
@@ -3664,7 +5660,7 @@ setTimeout(() => {
           <div className="text-xs font-semibold tracking-widest text-white/60">
             NEED MORE INFO
           </div>
-          <div className="mt-2 text-white/90">{analysis.needMoreInfo}</div>
+          <div className="mt-2 text-white/90">{displayAnalysis.needMoreInfo}</div>
         </div>
 
         <details className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -3675,15 +5671,174 @@ setTimeout(() => {
             {result}
           </pre>
         </details>
+        <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
+  <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+    CONTINUE FROM THIS RESULT
+  </div>
+
+    {showDiagnosticRefineBox ? (
+    <div className="mt-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        REFINE NEXT DIAGNOSTIC
+      </div>
+
+      <div className="mt-2 text-sm text-white/75">
+        {diagnosticRefineMode === "still_crashing"
+          ? "Tell FixMyGame what is still wrong or what it missed."
+          : "Add anything you want FixMyGame to keep in mind for the next diagnostic."}
+      </div>
+
+<div className="mt-2 text-xs text-white/55">
+  You can run the next diagnostic with your note only, or add a newer crash log below if you want FixMyGame to compare new evidence.
+</div>
+
+      <textarea
+        value={diagnosticRefineText}
+        onChange={(e) => setDiagnosticRefineText(e.target.value)}
+        placeholder={
+          diagnosticRefineMode === "still_crashing"
+            ? "Example: The game launches now, but one mod still does not load and I still see a workshop mismatch warning."
+            : "Example: I removed the suspected mod, but I still want FixMyGame to watch for dependency warnings."
+        }
+        className="mt-3 min-h-[120px] w-full resize-y rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/30"
+      />
+
+<div className="mt-3">
+  {!showAdditionalRefineLogBox ? (
+    <button
+      type="button"
+      onClick={() => setShowAdditionalRefineLogBox(true)}
+      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+    >
+      Add Additional Crash Log
+    </button>
+  ) : (
+    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="text-xs font-semibold tracking-widest text-white/60">
+        ADDITIONAL CRASH LOG
+      </div>
+
+      <div className="mt-2 text-xs text-white/55">
+        Paste a newer or more relevant crash/error log here if you have one.
+      </div>
+
+      <textarea
+        value={additionalRefineLog}
+        onChange={(e) => setAdditionalRefineLog(e.target.value)}
+        placeholder="Paste a newer crash log, warning output, or relevant error snippet here..."
+        className="mt-3 min-h-[140px] w-full resize-y rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/30"
+      />
+
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => {
+            setShowAdditionalRefineLogBox(false);
+            setAdditionalRefineLog("");
+          }}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+        >
+          Remove Additional Log
+        </button>
       </div>
     </div>
+  )}
+</div>
+
+     <div className="mt-3 flex flex-wrap gap-2">
+
+  <button
+  type="button"
+  onClick={async () => {
+    if (!diagnosticRefineMode) return;
+    await runRefinedDiagnosticNow();
+  }}
+  className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/15"
+>
+  Run Refined Diagnostic
+</button>
+
+  <button
+    type="button"
+    onClick={() => {
+      setShowDiagnosticRefineBox(false);
+      setDiagnosticRefineMode(null);
+      setDiagnosticRefineText("");
+      setShowAdditionalRefineLogBox(false);
+      setAdditionalRefineLog("");
+    }}
+    className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+  >
+    Cancel
+  </button>
+</div>
+    </div>
+) : (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={async () => {
+  pushSupportEvent("continue_diagnostic_clicked", "User clicked Continue Diagnostic");
+  await sendSupportSnapshot(
+    "continue_diagnostic_clicked",
+    "User clicked Continue Diagnostic"
+  );
+  startResultRefinement("continue");
+}}
+        className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-400/15"
+      >
+        Continue Diagnostic
+      </button>
+
+      <button
+  type="button"
+  onClick={async () => {
+  pushSupportEvent("diagnostic_fixed_it_clicked", "User marked current issue as fixed");
+  await sendSupportSnapshot(
+    "diagnostic_fixed_it_clicked",
+    "User marked current issue as fixed"
+  );
+  showResultFollowupMessage(
+    "Nice — current issue marked as fixed.",
+    "success"
+  );
+}}
+  className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/15"
+>
+  ✅ Fixed it
+</button>
+
+      <button
+        type="button"
+        onClick={async () => {
+  pushSupportEvent("still_crashing_clicked", "User clicked Still Crashing");
+  await sendSupportSnapshot(
+    "still_crashing_clicked",
+    "User clicked Still Crashing"
+  );
+  startResultRefinement("still_crashing");
+}}
+        className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-200 transition hover:bg-red-500/15"
+      >
+        ❌ Still crashing
+      </button>
+    </div>
+  )}
+</div>
+
+  <p className="mt-2 text-sm text-white/70">
+    If you test a fix and want FixMyGame to stay aware of this issue on your next diagnostic,
+    continue from this result before loading a newer crash log.
+  </p>
+</div>
+  </div>
   ) : (
     <div className="rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.35)] p-5 text-white/70">
   Paste a {gameTitle} crash log or error report, then run a diagnostic to see results here.
 </div>
   )}
 </section>
-{showFixGuide && analysis ? (
+{showFixGuide && displayAnalysis ? (
   <div
     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
     onClick={() => setShowFixGuide(false)}
@@ -3709,12 +5864,12 @@ setTimeout(() => {
           START HERE
         </div>
         <div className="mt-2 text-lg font-semibold text-white">
-          {analysis.quickFixFirst}
+          {displayAnalysis.quickFixFirst}
         </div>
       </div>
 
       <div className="mt-5 grid gap-3">
-        {analysis.recommendedFixSteps.map((step, index) => (
+        {displayAnalysis.recommendedFixSteps.map((step, index) => (
           <div
             key={`${index}-${step}`}
             className="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-white/90"
@@ -3731,7 +5886,7 @@ setTimeout(() => {
         <div className="text-xs font-semibold tracking-widest text-white/60">
           MOST LIKELY CAUSE
         </div>
-        <div className="mt-2 text-white">{analysis.mostLikelyCause}</div>
+        <div className="mt-2 text-white">{displayAnalysis.mostLikelyCause}</div>
       </div>
 
       <div className="mt-5 flex justify-end gap-3">
@@ -3761,97 +5916,103 @@ setTimeout(() => {
       if (!runningFixPlan) setShowFixPreviewModal(false);
     }}
   >
-    <div
-      className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
-      onClick={(e) => e.stopPropagation()}
+   <div
+  className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#071224] shadow-2xl"
+  onClick={(e) => e.stopPropagation()}
+>
+      <div className="shrink-0 border-b border-white/10 px-6 py-5">
+  <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+    REPAIR PREVIEW
+  </div>
+
+  <h2 className="mt-2 text-2xl font-bold text-white">
+    {fixPlan.title}
+  </h2>
+
+  <p className="mt-3 text-white/75">
+    {fixPlan.description}
+  </p>
+</div>
+
+<div className="custom-scroll min-h-0 flex-1 overflow-y-auto px-6 py-5">
+  <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
+      WHAT FIXMYGAME CAN DO RIGHT NOW
+    </div>
+    <div className="mt-2 text-white/90">
+      This version can perform one supported Safe Fix: backing up and quarantining a likely broken mod or folder. Bigger automatic repairs like editing configs, moving multiple mods, or changing launcher settings are planned for a future update.
+    </div>
+  </div>
+
+<div className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+  <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
+    WHAT APPLY SAFE FIX DOES
+  </div>
+  <div className="mt-2 text-white/90">
+    FixMyGame will back up the most likely broken mod or invalid folder, then move it out of your active Mods folder so the game can launch without it.
+  </div>
+</div>
+
+<div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
+  <div className="text-xs font-semibold tracking-widest text-white/60">
+    SAFE FIX WILL DO THIS
+  </div>
+
+  <div className="mt-3 grid gap-2">
+    {buildSafeFixPlanPreview({
+      suspectMods: safeFixSuspects,
+      selectedGameKey,
+    }).map((item) => (
+      <div
+        key={item.id}
+        className="rounded-xl border border-white/10 bg-black/20 px-3 py-3"
+      >
+        <div className="font-medium text-white">{item.title}</div>
+        <div className="mt-2 text-sm text-white/70">{item.detail}</div>
+      </div>
+    ))}
+  </div>
+</div>
+
+{!gameInstallPath ? (
+    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
+      Safe Fix is unavailable right now because FixMyGame does not detect a local {gameTitle} install on this device. Pasted logs can still be diagnosed, but Safe Fix needs a real local game folder.
+    </div>
+  ) : safeFixSuspects.length === 0 ? (
+    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
+      Safe Fix is unavailable right now because no suspected mods were detected from this crash.
+    </div>
+  ) : null}
+
+  {fixPreviewError ? (
+    <div className="mt-5 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+      {fixPreviewError}
+    </div>
+  ) : null}
+</div>
+
+<div className="shrink-0 border-t border-white/10 px-6 py-4">
+  <div className="flex flex-wrap justify-end gap-3">
+
+    <button
+      type="button"
+      onClick={() => setShowFixPreviewModal(false)}
+      disabled={runningFixPlan}
+      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
     >
-      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-        REPAIR PREVIEW
-      </div>
+      Cancel
+    </button>
 
-      <h2 className="mt-2 text-2xl font-bold text-white">
-        {fixPlan.title}
-      </h2>
+    <button
+      type="button"
+      onClick={applyQuickFix}
+      disabled={runningFixPlan}
+      className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      Copy Fix Steps
+    </button>
 
-      <p className="mt-3 text-white/75">
-        {fixPlan.description}
-      </p>
-
-      <div className="mt-5 rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-        <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
-          WHAT FIXMYGAME CAN DO RIGHT NOW
-        </div>
-        <div className="mt-2 text-white/90">
-          This version only runs safe actions. Bigger changes like editing files, disabling mods automatically, moving multiple mods, and changing launcher settings are planned for a future update with backup and restore support.
-        </div>
-      </div>
-
-      {!gameInstallPath ? (
-  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
-    Safe Fix is unavailable right now because FixMyGame does not detect a local {gameTitle} install on this device. Pasted logs can still be diagnosed, but Safe Fix needs a real local game folder.
-  </div>
-) : safeFixSuspects.length === 0 ? (
-  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
-    Safe Fix is unavailable right now because no suspected mods were detected from this crash.
-  </div>
-) : null}
-
-      <div className="mt-5 grid gap-3">
-        {fixPlan.actions.map((action) => (
-          <div
-            key={action.id}
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-4"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="font-semibold text-white">{action.title}</div>
-
-              <span
-                className={[
-                  "rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide",
-                  getRiskClasses(action.risk),
-                ].join(" ")}
-              >
-                {action.risk} risk
-              </span>
-
-              <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/70">
-                {action.reversible ? "reversible" : "no file change"}
-              </span>
-            </div>
-
-            <div className="mt-2 text-sm text-white/75">
-              {action.description}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {fixPreviewError ? (
-  <div className="mt-5 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
-    {fixPreviewError}
-  </div>
-) : null}
-
-      <div className="mt-6 flex flex-wrap justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => setShowFixPreviewModal(false)}
-          disabled={runningFixPlan}
-          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Cancel
-        </button>
-
-        <button
-          type="button"
-          onClick={applyQuickFix}
-          disabled={runningFixPlan}
-          className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Copy Fix Steps
-        </button>
-
-        <button
+    <button
   type="button"
   onClick={applySafeFixNow}
   disabled={applyingSafeFix || !canApplySafeFix}
@@ -3866,15 +6027,16 @@ setTimeout(() => {
     : "Apply Safe Fix"}
 </button>
 
-        <button
-          type="button"
-          onClick={runFixPlan}
-          disabled={runningFixPlan}
-          className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {runningFixPlan ? "Opening Tools and Copying Steps..." : "Guide Me Through It"}
-        </button>
-      </div>
+    <button
+      type="button"
+      onClick={runFixPlan}
+      disabled={runningFixPlan}
+      className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {runningFixPlan ? "Opening Tools and Copying Steps..." : "Guide Me Through It"}
+    </button>
+  </div>
+</div>
     </div>
   </div>
 ) : null}
@@ -3889,48 +6051,53 @@ setTimeout(() => {
       Did this fix your issue?
     </div>
 
-    <div className="mt-2 text-sm text-white/70">
-      {lastFixResult?.file
-        ? `We moved ${lastFixResult.file} to try to resolve the crash.`
-        : "We applied a safe fix to your game."}
-    </div>
+<div className="mt-2 text-sm text-white/70">
+  {lastFixResult?.movedFile
+    ? lastFixResult?.candidateKind === "empty_folder"
+      ? `We backed up and quarantined the empty folder ${lastFixResult.movedFile} so the game no longer loads it.`
+      : lastFixResult?.candidateKind === "invalid_loose_file"
+      ? `We backed up and quarantined the loose file ${lastFixResult.movedFile} so it no longer interferes with loading.`
+      : `We backed up and quarantined ${lastFixResult.movedFile} so the game no longer loads it.`
+    : "We applied a safe fix to your game."}
+</div>
 
     <div className="mt-4 flex gap-2">
       <button
-        onClick={() => {
-          setShowFixFeedback(false);
-          showActionMessage(
-  "Nice — your game should be working now. You’re good to go.",
-  "fixAssistant"
-);
-        }}
+        onClick={async () => {
+  setShowFixFeedback(false);
+  pushSupportEvent("fix_confirmed", "User said the fix worked");
+  await sendSupportSnapshot("fix_confirmed", "User said the fix worked");
+  showActionMessage(
+    "Nice — your game should be working now. You’re good to go.",
+    "fixAssistant"
+  );
+}}
         className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 font-medium text-black hover:bg-emerald-400"
       >
         ✅ Fixed it
       </button>
 
       <button
-        onClick={() => {
+  onClick={async () => {
   setShowFixFeedback(false);
-
-  showActionMessage(
-    "Got it — let’s try another approach. Launch your game again, then run a new diagnostic.",
-    "fixAssistant"
+  pushSupportEvent("still_crashing_after_fix", "User said the issue is still happening after safe fix");
+  await sendSupportSnapshot(
+    "still_crashing_after_fix",
+    "User said the issue is still happening after safe fix"
   );
 
-  // scroll to diagnostic button
   setTimeout(() => {
     const el = document.getElementById("run-diagnostic-button");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, 300);
 }}
-        className="flex-1 rounded-xl bg-red-500/20 px-3 py-2 font-medium text-red-200 hover:bg-red-500/30"
-      >
-        ❌ Still crashing
-      </button>
+  className="flex-1 rounded-xl bg-red-500/20 px-3 py-2 font-medium text-red-200 hover:bg-red-500/30"
+>
+  ❌ Still crashing
+</button>
     </div>
   </div>
-) : null}
+): null}
 
 {showFixHistoryModal ? (
   <div
@@ -3944,11 +6111,11 @@ setTimeout(() => {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-            SAVED HISTORY
+            FIX HISTORY
           </div>
 
           <h2 className="mt-2 text-2xl font-bold text-white">
-            Saved Fixes and Results
+            Saved Items and Diagnostics
           </h2>
 
           <p className="mt-2 text-white/75">
@@ -3965,11 +6132,39 @@ setTimeout(() => {
         </button>
       </div>
 
+<div className="mt-4 flex gap-2">
+  <button
+    type="button"
+    onClick={() => setFixHistoryTab("saved")}
+    className={[
+      "rounded-xl px-4 py-2 text-sm font-medium transition",
+      fixHistoryTab === "saved"
+        ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+        : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+    ].join(" ")}
+  >
+    Saved ({savedHistoryItems.length})
+  </button>
+
+  <button
+    type="button"
+    onClick={() => setFixHistoryTab("diagnostics")}
+    className={[
+      "rounded-xl px-4 py-2 text-sm font-medium transition",
+      fixHistoryTab === "diagnostics"
+        ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+        : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+    ].join(" ")}
+  >
+    Diagnostics ({diagnosticHistoryItems.length})
+  </button>
+</div>
+
       <div className="mt-1 flex flex-wrap justify-end gap-3">
         <button
           type="button"
           onClick={clearFixHistory}
-          disabled={fixHistoryItems.length === 0}
+          disabled={visibleHistoryItems.length === 0}
           className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-red-200 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Clear All
@@ -3977,53 +6172,80 @@ setTimeout(() => {
       </div>
 
       <div className="mt-5 max-h-[460px] space-y-3 overflow-y-auto pr-1">
-        {fixHistoryItems.length === 0 ? (
+        {visibleHistoryItems.length === 0 ? (
           <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white/70">
-            No saved items yet. Copy a quick fix, result, suspected mods, or fix plan to start building your Fix History.
+            {fixHistoryTab === "saved"
+            ? "No saved items yet. Copy a quick fix, result, suspected mods, or fix plan to save it here."
+            : "No diagnostic runs yet. Run a diagnostic and FixMyGame will save it here automatically."}
           </div>
         ) : (
-          fixHistoryItems.map((item) => (
+          visibleHistoryItems.map((item) => (
             <div
-              key={item.id}
-              className="rounded-xl border border-white/10 bg-white/5 p-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-white">{item.title}</div>
-                  <div className="mt-1 text-xs text-white/50">
-                    {item.gameTitle} • {new Date(item.createdAt).toLocaleString()}
-                  </div>
-                </div>
+  key={item.id}
+  className={[
+    "rounded-xl border p-4",
+    item.type === "diagnostic_run"
+      ? "border-white/8 bg-white/[0.03]"
+      : "border-white/10 bg-white/5",
+  ].join(" ")}
+>
+<div className="flex flex-wrap items-center justify-between gap-3">
+  <div>
+    <div className="font-semibold text-white">{item.title}</div>
+    <div className="mt-1 text-xs text-white/50">
+      {item.gameTitle} • {new Date(item.createdAt).toLocaleString()}
+    </div>
+  </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await copyTextReliable(item.text);
-                        showActionMessage("History item copied to system clipboard.", "fixAssistant");
-                      } catch (error: unknown) {
-                        showActionMessage("System clipboard copy failed on this device, but the item remains saved in Fix History.", "fixAssistant");
+  <div className="flex flex-wrap gap-2">
+    {item.type === "diagnostic_run" ? (
+      <button
+        type="button"
+        onClick={() => {
+          setContinuedDiagnosticBase(item);
+          setShowFixHistoryModal(false);
+          showActionMessage(
+            `Continuing from ${item.gameTitle}. Load a newer crash log, then run another diagnostic.`,
+            "diagnostic"
+          );
+        }}
+        className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-1.5 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
+      >
+        Continue From Here
+      </button>
+    ) : null}
 
-                        setErrorMsg(
-                          error instanceof Error ? error.message : "Failed to copy Fix History item."
-                        );
-                      }
-                    }}
-                    className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-1.5 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
-                  >
-                    Copy Again
-                  </button>
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await copyTextReliable(item.text);
+          showActionMessage("History item copied to system clipboard.", "fixAssistant");
+        } catch (error: unknown) {
+          showActionMessage(
+            "System clipboard copy failed on this device, but the item remains saved in Fix History.",
+            "fixAssistant"
+          );
 
-                  <button
-                    type="button"
-                    onClick={() => deleteFixHistoryItem(item.id)}
-                    className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-200 transition hover:bg-red-500/15"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
+          setErrorMsg(
+            error instanceof Error ? error.message : "Failed to copy Fix History item."
+          );
+        }
+      }}
+      className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-3 py-1.5 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
+    >
+      Copy
+    </button>
+
+    <button
+      type="button"
+      onClick={() => deleteFixHistoryItem(item.id)}
+      className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-1.5 text-sm text-red-200 transition hover:bg-red-500/15"
+    >
+      Delete
+    </button>
+  </div>
+</div>
 
               <pre className="mt-3 max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-black/20 p-3 text-sm text-white/85">
                 {item.text}
@@ -4090,6 +6312,121 @@ setTimeout(() => {
     </div>
   </div>
 ) : null}
+{!checkingAuthorization && !hasAcceptedAuthorization ? (
+  <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 px-4 py-6">
+    <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#071224] shadow-2xl">
+      <div className="max-h-[88vh] overflow-y-auto p-6 pr-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        BEFORE YOU CONTINUE
+      </div>
+
+      <h2 className="mt-2 text-3xl font-bold text-white">
+        FixMyGame needs your approval
+      </h2>
+
+      <p className="mt-4 text-white/80">
+        FixMyGame scans game-related files, reads logs, and can perform supported repair actions after you approve them.
+      </p>
+
+      <div className="mt-5 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+        <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+          WHAT FIXMYGAME MAY DO
+        </div>
+
+        <ul className="mt-3 grid gap-2 text-sm text-white/90">
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Scan game, mod, and log folders related to diagnostics
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Read log files to identify likely crashes, conflicts, and missing dependencies
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Open game-related folders you request
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Make supported repair changes only after you confirm them
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Create backups before supported file-changing fixes
+          </li>
+        </ul>
+      </div>
+
+<div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+  <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
+    HELP IMPROVE FIXMYGAME
+  </div>
+
+  <div className="mt-3 text-sm text-white/90">
+    If enabled, FixMyGame can securely collect anonymous diagnostic snapshots such as crash logs, mod lists, system details, detected issues, and repair actions. This helps improve detection accuracy, identify common problems faster, and deliver better fixes in future updates.
+  </div>
+
+  <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 transition hover:bg-black/30">
+    <input
+      type="checkbox"
+      checked={supportTelemetryEnabled}
+      onChange={(e) => setSupportTelemetryEnabled(e.target.checked)}
+      className="mt-1 h-4 w-4 accent-cyan-400"
+    />
+    <div>
+      <div className="text-sm font-medium text-white">
+        Help improve FixMyGame by sharing anonymous diagnostic data (recommended)
+      </div>
+      <div className="mt-1 text-xs text-white/60">
+        This helps improve issue detection, repair quality, and future updates. No unrelated personal files are accessed.
+      </div>
+    </div>
+  </label>
+</div>
+
+      <div className="mt-5 rounded-xl border border-white/10 bg-white/5 p-4">
+        <div className="text-xs font-semibold tracking-widest text-white/60">
+          WHAT FIXMYGAME WILL NOT DO AUTOMATICALLY
+        </div>
+
+        <ul className="mt-3 grid gap-2 text-sm text-white/85">
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Delete files without your confirmation
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Make silent repair changes in the background
+          </li>
+          <li className="rounded-lg bg-black/20 px-3 py-2">
+            Access unrelated personal files outside supported diagnostic workflows
+          </li>
+        </ul>
+      </div>
+
+      <div className="mt-6 flex flex-wrap justify-end gap-3">
+        <button
+          type="button"
+          onClick={exitAuthorizationGate}
+          className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-2 text-red-200 transition hover:bg-red-500/15"
+        >
+          Exit
+        </button>
+
+        <button
+          type="button"
+          onClick={acceptAuthorizationGate}
+          className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400"
+        >
+          Accept and Continue
+        </button>
+      </div>
+    </div>
+        </div>
+    </div>
+) : null}
+<div className="mt-8 flex justify-end">
+  <button
+    type="button"
+    onClick={openSupportEmail}
+    className="text-xs text-white/50 hover:text-white"
+  >
+    Report an Issue
+  </button>
+</div>
     </main>
   );
 }
@@ -4100,27 +6437,47 @@ function DarkSelect(props: {
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-  function handleClickOutside(event: MouseEvent) {
-    if (!rootRef.current) return;
-    if (!rootRef.current.contains(event.target as Node)) {
-      setOpen(false);
+    function handleClickOutside(event: MouseEvent) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
     }
-  }
 
-  document.addEventListener("mousedown", handleClickOutside);
-  return () => {
-    document.removeEventListener("mousedown", handleClickOutside);
-  };
-}, []);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+    }
+  }, [open]);
+
+  const filteredOptions = props.options.filter((option) =>
+    option.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          setOpen((prev) => !prev);
+          if (open) {
+            setSearch("");
+          }
+        }}
         className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-[#0b1220] px-4 py-3 text-left text-white outline-none transition hover:border-white/20"
       >
         <span>{props.value}</span>
@@ -4128,33 +6485,49 @@ function DarkSelect(props: {
       </button>
 
       {open ? (
-        <div
-          className="custom-scroll absolute left-0 right-0 top-full z-50 mt-2 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] shadow-2xl ring-1 ring-black/40"
-        >
-          {props.options.map((option, index) => {
-            const active = option === props.value;
+        <div className="custom-scroll absolute left-0 right-0 top-full z-50 mt-2 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-[#0b1220] shadow-2xl ring-1 ring-black/40">
+          <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0b1220] p-2">
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Type to find a game..."
+              className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/40 focus:border-white/20"
+            />
+          </div>
 
-            return (
-              <button
-                key={option}
-                type="button"
-                onClick={() => {
-                  props.onChange(option);
-                  setOpen(false);
-                }}
-                className={[
-                  "block w-full px-4 py-2.5 text-left transition",
-                  index === 0 ? "rounded-t-xl" : "",
-                  index === props.options.length - 1 ? "rounded-b-xl" : "",
-                  active
-                    ? "bg-blue-400/15 text-white"
-                    : "text-white/85 hover:bg-white/5",
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option, index) => {
+              const active = option === props.value;
+
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => {
+                    props.onChange(option);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className={[
+                    "block w-full px-4 py-2.5 text-left transition",
+                    option === "Custom / Other" ? "border-t border-white/10 mt-1 pt-3" : "",
+                    index === filteredOptions.length - 1 ? "rounded-b-xl" : "",
+                    active
+                      ? "bg-blue-400/15 text-white"
+                      : "text-white/85 hover:bg-white/5",
                   ].join(" ")}
-              >
-                {option}
-              </button>
-            );
-          })}
+                >
+                  {option}
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-4 py-3 text-sm text-white/50">
+              No matching games found.
+            </div>
+          )}
         </div>
       ) : null}
     </div>

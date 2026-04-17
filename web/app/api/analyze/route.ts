@@ -37,7 +37,7 @@ type DetectedSignals = {
   gameVersion?: string;
   javaVersion?: string;
   suspectedMods: string[];
-  likelyCategory?:
+    likelyCategory?:
     | "mod_conflict"
     | "missing_dependency"
     | "loader_mismatch"
@@ -46,6 +46,13 @@ type DetectedSignals = {
     | "out_of_memory"
     | "shader_crash"
     | "java_mismatch"
+    | "no_clear_issue_found"
+    | "no_new_log"
+    | "advisory_skipped_mod"
+    | "advisory_empty_folder"
+    | "advisory_optional_dependency"
+    | "advisory_workshop_warning"
+    | "advisory_partial_load"
     | "unknown";
 };
 
@@ -110,17 +117,429 @@ async function incrementAndGetCount(req: NextRequest) {
   return count;
 }
 
-function fallbackAnalyze(crashLog: string, gameKey = "", gameTitle = "Unknown Game"): AnalyzeModelResponse {
+function getRelevantLogWindow(crashLog: string, gameKey = "") {
+  const lines = crashLog.split("\n");
+
+  if (gameKey === "stardew_valley") {
+    // If the file contains multiple SMAPI sessions, prefer the latest one.
+    const sessionStartIndexes: number[] = [];
+
+    lines.forEach((line, index) => {
+      const lower = line.toLowerCase();
+      if (
+        lower.includes("smapi 4.") ||
+        lower.includes("log started at")
+      ) {
+        sessionStartIndexes.push(index);
+      }
+    });
+
+    if (sessionStartIndexes.length > 1) {
+      const lastStart = sessionStartIndexes[sessionStartIndexes.length - 1];
+      return lines.slice(lastStart).join("\n");
+    }
+
+    // Otherwise just bias toward the tail of the current session.
+    return lines.slice(-120).join("\n");
+  }
+
+  // Generic fallback: prefer the most recent portion of the log.
+  return lines.slice(-160).join("\n");
+}
+
+function isHealthyLog(crashLog: string, gameKey = "") {
+  const lower = crashLog.toLowerCase();
+
+  const hasStrongCrashSignal =
+    lower.includes("exception:") ||
+    lower.includes("fatal") ||
+    lower.includes("stack trace") ||
+    lower.includes("stacktrace") ||
+    lower.includes("missing dependency") ||
+    lower.includes("classnotfoundexception") ||
+    lower.includes("nosuchmethoderror") ||
+    lower.includes("outofmemoryerror") ||
+    lower.includes("unsupportedclassversionerror") ||
+    lower.includes("invalidinjectionexception") ||
+    lower.includes("failed to load") ||
+    lower.includes("could not load") ||
+    lower.includes("mods could not be added") ||
+    lower.includes("skipped mods") ||
+    lower.includes("missing mods") ||
+    lower.includes("mixin apply failed") ||
+    lower.includes("loader mismatch");
+
+  if (hasStrongCrashSignal) {
+    return false;
+  }
+
+  // Stardew Valley / SMAPI
+  if (gameKey === "stardew_valley") {
+    const hasHealthySignals =
+      lower.includes("mods loaded and ready!") ||
+      lower.includes("smapi okay") ||
+      lower.includes("launching mods...") ||
+      lower.includes("loaded 1 mods") ||
+      lower.includes("loaded 2 mods") ||
+      lower.includes("loaded 3 mods") ||
+      lower.includes("loaded 4 mods") ||
+      lower.includes("loaded 5 mods") ||
+      lower.includes("disconnected: closedgame") ||
+      lower.includes("disposing the content coordinator") ||
+      lower.includes("galaxy auth success") ||
+      lower.includes("galaxy signed in") ||
+      lower.includes("galaxy logged on");
+
+    return hasHealthySignals;
+  }
+
+  // Minecraft
+  if (gameKey === "minecraft") {
+    const hasHealthySignals =
+      (lower.includes("loaded") && lower.includes("mods")) ||
+      lower.includes("game started") ||
+      lower.includes("starting minecraft") ||
+      lower.includes("minecraft started");
+
+    const hasBadMinecraftSignals =
+      lower.includes("error loading class") ||
+      lower.includes("caused by:") ||
+      lower.includes("mod resolution encountered an incompatible") ||
+      lower.includes("failed to create mod instance");
+
+    return hasHealthySignals && !hasBadMinecraftSignals;
+  }
+
+  // Sims 4
+  if (gameKey === "sims4") {
+    const hasBadSimsSignals =
+      lower.includes("lastexception") ||
+      lower.includes("lastuiexception") ||
+      lower.includes("script call failed") ||
+      lower.includes("xml injector") ||
+      lower.includes("traceback");
+
+    if (hasBadSimsSignals) return false;
+
+    const hasHealthySignals =
+      lower.includes("the sims 4") ||
+      lower.includes("electronic arts") ||
+      lower.includes("documents\\electronic arts\\the sims 4");
+
+    return hasHealthySignals;
+  }
+
+  // Skyrim SE
+  if (gameKey === "skyrimse") {
+    const hasBadSkyrimSignals =
+      lower.includes("skse plugin loader") ||
+      lower.includes("address library") && lower.includes("failed") ||
+      lower.includes("dll plugin") && lower.includes("failed") ||
+      lower.includes("plugin") && lower.includes("error");
+
+    if (hasBadSkyrimSignals) return false;
+
+    const hasHealthySignals =
+      lower.includes("skyrim special edition") ||
+      lower.includes("skse") ||
+      lower.includes("plugins loaded");
+
+    return hasHealthySignals;
+  }
+
+  // Fallout 4
+  if (gameKey === "fallout4") {
+    const hasBadFalloutSignals =
+      lower.includes("buffout") && lower.includes("crash") ||
+      lower.includes("f4se") && lower.includes("error") ||
+      lower.includes("plugin") && lower.includes("error");
+
+    if (hasBadFalloutSignals) return false;
+
+    const hasHealthySignals =
+      lower.includes("fallout 4") ||
+      lower.includes("fallout4") ||
+      lower.includes("f4se");
+
+    return hasHealthySignals;
+  }
+
+  // Conservative generic fallback for other games:
+  // only mark healthy if there are no strong crash signals AND no obvious generic failure terms.
+  const hasGenericFailureSignals =
+    lower.includes(" exception ") ||
+    lower.includes(" error ") ||
+    lower.includes(" crashed ") ||
+    lower.includes(" crash ") ||
+    lower.includes(" failed ") ||
+    lower.includes(" failure ");
+
+  if (!hasGenericFailureSignals && crashLog.trim().split("\n").length >= 10) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractSuspectedMods(crashLog: string, gameKey = "") {
+  const lower = crashLog.toLowerCase();
+  const mods = new Set<string>();
+
+  if (gameKey === "stardew_valley") {
+    const lines = crashLog.split("\n");
+
+    for (const line of lines) {
+      const loadedMatch = line.match(
+        /^\[[^\]]+\]\s+INFO\s+SMAPI\]\s+(.+?)\s+\d+\.\d+(?:\.\d+)*\s+by\s+/i
+      );
+      if (loadedMatch?.[1]) {
+        const modName = loadedMatch[1].trim();
+        if (
+          modName &&
+          !modName.toLowerCase().includes("type 'help'") &&
+          !modName.toLowerCase().includes("mods go here")
+        ) {
+          mods.add(modName);
+        }
+      }
+
+      const traceMatch = line.match(
+        /^\[[^\]]+\]\s+TRACE\s+SMAPI\]\s+(.+?)\s+\(from\s+Mods\\/i
+      );
+      if (traceMatch?.[1]) {
+        const modName = traceMatch[1].trim();
+        if (modName) {
+          mods.add(modName);
+        }
+      }
+    }
+
+    return Array.from(mods).slice(0, 20);
+  }
+
+  if (gameKey === "minecraft") {
+    const knownMods = [
+      "jei",
+      "fabric-api",
+      "sodium",
+      "iris",
+      "oculus",
+      "optifine",
+      "rubidium",
+      "embeddium",
+    ];
+
+    for (const mod of knownMods) {
+      if (lower.includes(mod)) {
+        mods.add(mod);
+      }
+    }
+
+    return Array.from(mods).slice(0, 20);
+  }
+
+  return [];
+}
+
+function buildContinuationAwareHealthyResult(params: {
+  gameTitle: string;
+  continuedDiagnostic?: {
+    issue?: string;
+    likelyCategory?: string;
+    previousText?: string;
+    suspectedMods?: string[];
+    previousRelevantLog?: string;
+  } | null;
+  currentMods?: string[];
+}) {
+  const { gameTitle, continuedDiagnostic, currentMods = [] } = params;
+
+  const previousCategory = continuedDiagnostic?.likelyCategory || "";
+  const previousIssue = continuedDiagnostic?.issue || "";
+  const previousWasHealthy = previousCategory === "no_clear_issue_found";
+
+  const hasAdditionalMods = currentMods.length > 0;
+
+  if (previousWasHealthy) {
+    return {
+      quickFixFirst: hasAdditionalMods
+        ? `Your previous diagnostic also showed no clear issue, and this newer ${gameTitle} log still looks healthy with active mods loaded.`
+        : `Your previous diagnostic also showed no clear issue, and this newer ${gameTitle} log still looks healthy.`,
+      issue:
+        "No clear crash, broken mod, or missing dependency was found. This result is consistent with the previous diagnostic.",
+      confidenceLevel: "High" as const,
+      probabilityBreakdown: [
+        "100% - No clear issue found across both diagnostics",
+      ],
+      mostLikelyCause: hasAdditionalMods
+        ? "The game appears stable across both diagnostics, including with currently loaded mods."
+        : "The game appears stable across both diagnostics.",
+      recommendedFixSteps: [
+        `Launch ${gameTitle} normally and keep playing.`,
+        "If a problem appears later, run another diagnostic immediately after it happens.",
+        "Load the newest crash or error log from the moment the issue occurs if the problem returns.",
+      ],
+      needMoreInfo:
+        "No additional information is needed unless the issue returns.",
+      detectedSignals: {
+        suspectedMods: currentMods,
+        likelyCategory: "no_clear_issue_found" as const,
+      },
+    };
+  }
+
+  return {
+    quickFixFirst:
+      previousIssue.trim().length > 0
+        ? `The previous issue is not visible in this newer ${gameTitle} log. The game now appears stable.`
+        : `No clear issue was found in this newer ${gameTitle} log.`,
+    issue:
+      previousIssue.trim().length > 0
+        ? `The previous issue does not appear in this newest log. No clear crash, broken mod, or missing dependency is currently visible.`
+        : "No clear crash, broken mod, or missing dependency was found in this log.",
+    confidenceLevel: "High" as const,
+    probabilityBreakdown: [
+      previousIssue.trim().length > 0
+        ? "100% - Previous issue not visible in newest log"
+        : "100% - No clear issue found in this log",
+    ],
+    mostLikelyCause:
+      previousIssue.trim().length > 0
+        ? "The game appears to be starting and closing normally, so the previous issue may be resolved."
+        : "This log appears to show a normal startup or normal session end rather than an active crash or mod failure.",
+    recommendedFixSteps: [
+      `Launch ${gameTitle} again and test normally.`,
+      "If the old issue returns, load the newest crash or error log created after it happens.",
+      "If the problem is intermittent, run FixMyGame again immediately after it appears.",
+    ],
+    needMoreInfo:
+      previousIssue.trim().length > 0
+        ? "If the old problem returns, load the newest crash or error log from that exact run so FixMyGame can compare it against the previous issue."
+        : "If your game is still crashing, this may be the wrong log or a normal session log. Load the newest crash or error log created after the problem appears.",
+    detectedSignals: {
+      suspectedMods: currentMods,
+      likelyCategory: "no_clear_issue_found" as const,
+    },
+  };
+}
+
+function detectForcedStardewEmptyFolderAdvisory(params: {
+  crashLog: string;
+  quickSignals?: Record<string, unknown> | null;
+  logHighlights?: string[] | null;
+  liveMods?: string[] | null;
+}) {
+  const rawLog = String(params.crashLog || "");
+  const lowerLog = rawLog.toLowerCase();
+
+  const quickIssue = String(params.quickSignals?.issue || "").toLowerCase();
+  const quickError = String(params.quickSignals?.error || "").toLowerCase();
+  const highlights = Array.isArray(params.logHighlights) ? params.logHighlights : [];
+  const mods = Array.isArray(params.liveMods) ? params.liveMods : [];
+
+  const emptyFolderMatch =
+    rawLog.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's an empty folder\./i) ||
+    rawLog.match(/TRACE SMAPI\]\s+([A-Za-z0-9 _.'\-\[\]]+)\s+\(from Mods\\[^)]*\)\.\.\.[\s\S]*?Failed:\s+it's an empty folder\./i);
+
+  const matchedMod = emptyFolderMatch?.[1]?.trim() || mods[0] || "the empty mod folder";
+
+  const hasEmptyFolderPattern =
+    Boolean(emptyFolderMatch) ||
+    lowerLog.includes("because it's an empty folder") ||
+    (lowerLog.includes("skipped mods") && lowerLog.includes("empty folder")) ||
+    quickIssue.includes("empty mod folder") ||
+    quickIssue.includes("skipped empty mod folder") ||
+    quickError.includes("emptyfolder") ||
+    highlights.some((line) => line.toLowerCase().includes("empty folder"));
+
+  if (!hasEmptyFolderPattern) {
+    return null;
+  }
+
+  return {
+    quickFixFirst: `Delete the empty folder for ${matchedMod} from your Mods folder.`,
+    issue: `The game is skipping a mod because its folder is empty.`,
+    confidenceLevel: "High" as const,
+    probabilityBreakdown: [
+      `100% - The empty folder for ${matchedMod} is the cause of this warning.`,
+    ],
+    mostLikelyCause: `The mod ${matchedMod} is not properly installed because its folder is empty.`,
+    recommendedFixSteps: [
+      `Delete the empty folder for ${matchedMod} from your Mods folder.`,
+      `Launch Stardew Valley again after removing it so SMAPI creates a fresh log.`,
+      `Load the newest SMAPI log after that launch to confirm the warning is gone.`,
+    ],
+    needMoreInfo:
+      `If you still see the same warning after removing it, you may be looking at an older log. Launch the game again and load the newest SMAPI log.`,
+    detectedSignals: {
+      suspectedMods: [matchedMod],
+      likelyCategory: "advisory_empty_folder" as const,
+      advisoryLevel: "advisory" as const,
+      advisoryTitle: "Empty mod folder found",
+      advisoryMessage: `${matchedMod} is an empty folder. This is a warning cleanup issue, not a full game crash.`,
+    },
+  };
+}
+
+function fallbackAnalyze(
+  crashLog: string,
+  gameKey = "",
+  gameTitle = "Unknown Game",
+  continuedDiagnostic?: {
+    issue?: string;
+    likelyCategory?: string;
+    previousText?: string;
+    suspectedMods?: string[];
+    previousRelevantLog?: string;
+  } | null
+): AnalyzeModelResponse {
   const lower = crashLog.toLowerCase();
   const normalizedGameKey = typeof gameKey === "string" ? gameKey : "";
   const normalizedGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
   
   const suspectedMods: string[] = [];
 
+    if (isHealthyLog(crashLog, normalizedGameKey)) {
+  const currentMods = extractSuspectedMods(crashLog, normalizedGameKey);
+  return buildContinuationAwareHealthyResult({
+    gameTitle: normalizedGameTitle,
+    continuedDiagnostic,
+    currentMods,
+  });
+}
+  
   if (typeof crashLog === "string" && crashLog.toLowerCase().includes("mezz/jei")) {
   if (!suspectedMods.includes("jei")) {
     suspectedMods.unshift("jei"); // force it to be FIRST
   }
+}
+
+if (normalizedGameKey === "custom") {
+  const leadSuspect = suspectedMods[0] || "the most recently added mod or plugin";
+
+  return {
+    quickFixFirst: `Start by testing without ${leadSuspect}.`,
+    issue: `FixMyGame found signs of a mod, plugin, or setup issue in this ${normalizedGameTitle} log, but the exact failure is not fully confirmed yet.`,
+    confidenceLevel: "Medium",
+    probabilityBreakdown: [
+      "50% - Mod or plugin conflict",
+      "30% - Missing dependency or version mismatch",
+      "20% - Incomplete or wrong log",
+    ],
+    mostLikelyCause:
+      "A mod/plugin conflict, missing dependency, version mismatch, or incomplete install is more likely than a clean/no-issue state.",
+    recommendedFixSteps: [
+      `Disable or remove ${leadSuspect} first, then test again.`,
+      "Check that all mods/plugins match the exact game version and required frameworks.",
+      "If the issue continues, load the newest crash or error log created immediately after reproducing it.",
+    ],
+    needMoreInfo:
+      "If this is still too generic, use Continue Diagnostic or Still Crashing and describe exactly what FixMyGame missed.",
+    detectedSignals: {
+      suspectedMods,
+      likelyCategory: "unknown",
+    },
+  };
 }
 
   const suspiciousNamespaces: Array<{ needle: string; mod: string }> = [
@@ -316,7 +735,7 @@ if (normalizedGameKey === "fallout4") {
     likelyCategory = "mod_conflict";
   }
 
-  let quickFixFirst = "Disable the most recently added or updated mod and test again.";
+let quickFixFirst = "Disable the most recently added or updated mod and test again.";
 let issue = `Possible mod conflict or version mismatch in the current ${normalizedGameTitle} setup.`;
 let mostLikelyCause =
   "One or more installed mods or plugins appear incompatible with the current game build or another installed mod.";
@@ -331,6 +750,31 @@ let recommendedFixSteps = [
   "Verify required dependencies are installed.",
   "Temporarily remove graphics or script/plugin-heavy mods if the issue persists.",
 ];
+
+if (normalizedGameKey === "stardew_valley") {
+  if (
+    lower.includes("installer isn't a mod") ||
+    lower.includes("smapi installer isn't a mod") ||
+    lower.includes("skipped mods")
+  ) {
+    quickFixFirst = "Delete the SMAPI installer folder from your Mods folder.";
+
+    issue = "A non-mod installer folder is in your Mods folder, so the game is skipping it.";
+
+    mostLikelyCause =
+      "The SMAPI installer folder was left inside your Mods folder after installation.";
+
+    probabilityBreakdown = [
+      "100% - Non-mod installer folder in Mods"
+    ];
+
+    recommendedFixSteps = [
+      "Delete the “SMAPI 4.5.2 installer” folder from your Mods folder.",
+      "Restart Stardew Valley and check if your mods load normally.",
+      "Run another diagnostic only if the issue continues."
+    ];
+  }
+}
 
 if (normalizedGameKey === "sims4") {
   quickFixFirst = "Remove recently added script mods or CC, then relaunch.";
@@ -602,6 +1046,9 @@ function applyForcedSuspiciousMod(
     ),
   ];
 
+  if (normalized.detectedSignals?.likelyCategory === "advisory_empty_folder") {
+  return normalized;
+}
   const suspiciousLineLower = (mostSuspiciousLine || "").toLowerCase();
 
   let likelyCategory = normalized.detectedSignals?.likelyCategory || "unknown";
@@ -669,6 +1116,13 @@ function applyForcedSuspiciousMod(
   };
 }
 
+function normalizeLogForComparison(log: string) {
+  return log
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
+
 export async function POST(req: NextRequest) {
   try {
     const redisPro = await isProUser(req);
@@ -694,8 +1148,24 @@ export async function POST(req: NextRequest) {
       gpuModel,
       driverVersion,
       graphicsApiMode,
-      mostSuspiciousLine, 
+      mostSuspiciousLine,
+      quickSignals,
+      logHighlights,
+      liveMods,
+      currentLogPath,
+      continuedDiagnostic,
+      resultRefinement,
     } = body ?? {};
+
+    const forcedStardewEmptyFolderAdvisory =
+  gameKey === "stardew_valley"
+    ? detectForcedStardewEmptyFolderAdvisory({
+        crashLog: typeof crashLog === "string" ? crashLog : "",
+        quickSignals: quickSignals || null,
+        logHighlights: Array.isArray(logHighlights) ? logHighlights : [],
+        liveMods: Array.isArray(liveMods) ? liveMods : [],
+      })
+    : null;
 
     if (!crashLog || typeof crashLog !== "string" || !crashLog.trim()) {
       const remainingInfo = await getRemaining(req);
@@ -707,6 +1177,18 @@ export async function POST(req: NextRequest) {
 
 const safeGameKey = typeof gameKey === "string" ? gameKey : "";
 const safeGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
+
+const relevantCrashLog = getRelevantLogWindow(crashLog, safeGameKey);
+const healthyLogDetected = isHealthyLog(relevantCrashLog, safeGameKey);
+const normalizedRelevantCrashLog = normalizeLogForComparison(relevantCrashLog);
+const previousRelevantCrashLog =
+  typeof continuedDiagnostic?.previousRelevantLog === "string"
+    ? normalizeLogForComparison(continuedDiagnostic.previousRelevantLog)
+    : "";
+
+const noNewLogAdded =
+  !!previousRelevantCrashLog &&
+  previousRelevantCrashLog === normalizedRelevantCrashLog;
 
 let forcedSuspiciousMod = "";
 
@@ -728,10 +1210,89 @@ if (typeof mostSuspiciousLine === "string") {
 
 const gameSpecificPrompt = getGameSpecificPrompt(safeGameKey, safeGameTitle);
 
+const refinementSection =
+  resultRefinement?.userMessage?.trim()
+    ? `
+USER FOLLOW-UP:
+Mode: ${resultRefinement.mode || "unknown"}
+User says: ${resultRefinement.userMessage.trim()}
+
+This follow-up is important.
+Do not ignore it.
+
+If the log shows a non-fatal warning or advisory issue, reflect that clearly instead of calling the log fully normal.
+If the user says the issue is still happening, adapt the diagnosis and next steps to that context.
+If the user clarifies that the issue is only a warning and not a crash, lower the severity and explain that clearly.
+If the same warning may still be present because the user is looking at an older log, say so explicitly and tell them to relaunch the game and load the newest log created after testing the fix.
+
+Return a cleaner, more adaptive diagnosis than the previous run.
+`
+    : "";
+
+    const structuredSignalsSection = `
+STRUCTURED SIGNALS FROM FIXMYGAME:
+- Game key: ${safeGameKey || "unknown"}
+- Game title: ${safeGameTitle || "unknown"}
+- GPU model: ${typeof gpuModel === "string" ? gpuModel : "unknown"}
+- Driver version: ${typeof driverVersion === "string" ? driverVersion : "unknown"}
+- Graphics API mode: ${typeof graphicsApiMode === "string" ? graphicsApiMode : "unknown"}
+- Current log path: ${typeof currentLogPath === "string" && currentLogPath.trim() ? currentLogPath : "unknown"}
+- Most suspicious line: ${typeof mostSuspiciousLine === "string" && mostSuspiciousLine.trim() ? mostSuspiciousLine : "none"}
+- Quick signals: ${JSON.stringify(quickSignals || {})}
+- Log highlights: ${JSON.stringify(Array.isArray(logHighlights) ? logHighlights : [])}
+- Live mods detected: ${JSON.stringify(Array.isArray(liveMods) ? liveMods : [])}
+- Continued diagnostic context: ${JSON.stringify(continuedDiagnostic || null)}
+
+How to use these structured signals:
+- Use them before relying only on the raw log text.
+- If these signals show a warning, skipped mod, empty folder, missing dependency, or partial load, do NOT call the log fully normal.
+- If the game is unsupported/custom, still return a clean and useful diagnosis.
+- If the issue is advisory rather than a crash, say that clearly.
+- Prefer very simple user-facing language.
+`;
+
 const prompt = `
 ${gameSpecificPrompt}
 
+${structuredSignalsSection}
+
+${refinementSection}
+
 You are an advanced crash diagnostic engine specialized in modded PC games.
+
+Writing Style Rules:
+- The "issue" field must be written in clear, natural, human-friendly language.
+- Explain the problem simply using cause-and-effect.
+- Avoid robotic or technical phrasing like "due to the presence of".
+- Do NOT start with words like "Skipped", "Detected", or "Failure".
+- Keep it to ONE sentence.
+- Make it sound like something you would say to a user, not a developer.
+
+Good example:
+"A non-mod installer folder is in your Mods folder, so the game is skipping it."
+
+Bad example:
+"Skipped mods due to the presence of a non-mod installer in the Mods directory."
+
+Wording Preferences:
+- Use "Mods folder" instead of "Mods directory"
+- Use "Delete" instead of "Remove" when referring to files/folders
+
+Decision Rules:
+- Distinguish clearly between:
+  1. active crash
+  2. advisory / warning
+  3. missing dependency
+  4. version mismatch
+  5. invalid or empty mod folder
+  6. partial mod/plugin load
+  7. healthy / normal log
+- If the log is healthy but the user follow-up says they still have a problem, acknowledge that the current log may be the wrong log or an older log.
+- If the issue is only a warning and not a crash, lower severity and explain that clearly.
+- If the same warning could still be visible because the user loaded an older log, say that explicitly.
+- If the result is uncertain, still give the best simple next step instead of being vague.
+- Never leave any field blank.
+- For unsupported/custom games, still provide a clean diagnosis with the most likely cause and the next best action.
 
 Analyze the crash log and return STRICT JSON only.
 Do not return markdown.
@@ -752,7 +1313,7 @@ Expected JSON shape:
     "gameVersion": "string",
     "javaVersion": "string",
     "suspectedMods": ["string"],
-    "likelyCategory": "mod_conflict | missing_dependency | loader_mismatch | mixin_failure | gpu_driver_issue | out_of_memory | shader_crash | java_mismatch | unknown"
+    "likelyCategory": "mod_conflict | missing_dependency | loader_mismatch | mixin_failure | gpu_driver_issue | out_of_memory | shader_crash | java_mismatch | no_clear_issue_found | unknown"
   }
 }
 
@@ -761,6 +1322,19 @@ Rules:
 - suspectedMods should be short names only.
 - probabilityBreakdown entries should total 100%.
 - recommendedFixSteps should be practical.
+- Do not invent secondary causes just to fill out the probability breakdown.
+- If the crash log points to one clear issue, the probability breakdown should reflect that clearly.
+- When only one issue is strongly supported, use a single 100% entry instead of adding weak extra possibilities.
+- If the log shows a normal startup or does not contain a clear crash, missing dependency, or mod failure, DO NOT invent an issue.
+- In that case, return a result indicating "no clear issue found in this log".
+- Explain that the user may need to load a newer crash log captured after the issue happens.
+- If previous diagnostic context is provided, compare the new log against the previous issue.
+- State clearly whether the previous issue appears resolved, unchanged, replaced by a new issue, or not visible in the newest log.
+- Do not keep blaming an old issue if it no longer appears in the newest log.
+- If previous diagnostic context is provided, compare the newest log against the previous result.
+- State clearly whether the previous issue appears resolved, unchanged, replaced by a new issue, or not visible in the newest log.
+- If the newest log is healthy and the previous diagnostic was also healthy, say that the result remains stable across both diagnostics.
+- If the newest log is healthy but the previous diagnostic showed an issue, say that the previous issue is not visible in the newest log and may be resolved.
 
 Context:
 Game: ${safeGameTitle}
@@ -782,12 +1356,74 @@ Priority Rules:
 - Do not ignore the suspicious line just because the full log is long.
 - If JEI, Fabric API, Forge, Quilt, SKSE, F4SE, MCCC, WickedWhims, Basemental, XML Injector, Address Library, Buffout, or similar major frameworks are referenced, call them out by name when relevant.
 
+Previous Diagnostic Context:
+${
+  continuedDiagnostic
+    ? JSON.stringify(continuedDiagnostic, null, 2)
+    : "None"
+}
+
+${refinementSection}
+
 Crash Log:
-${crashLog}
+${relevantCrashLog}
 `;
 
-    let parsed: AnalyzeModelResponse;
+let parsed: AnalyzeModelResponse;
 
+const hasRefinementNote =
+  typeof resultRefinement?.userMessage === "string" &&
+  resultRefinement.userMessage.trim().length > 0;
+
+  const hasStructuredWarningSignals =
+  Boolean(quickSignals?.issue) ||
+  Boolean(quickSignals?.error) ||
+  Boolean(mostSuspiciousLine) ||
+  (Array.isArray(logHighlights) && logHighlights.length > 0) ||
+  (Array.isArray(liveMods) && liveMods.length > 0);
+
+const shouldUseAiEvenIfHealthy =
+  hasRefinementNote ||
+  safeGameKey === "custom" ||
+  hasStructuredWarningSignals;
+
+  if (forcedStardewEmptyFolderAdvisory) {
+  parsed = forcedStardewEmptyFolderAdvisory;
+} else
+
+if (healthyLogDetected) {
+  if (noNewLogAdded) {
+    parsed = {
+      quickFixFirst:
+        "This appears to be the same log as your previous diagnostic. Load a newer log before continuing.",
+
+      issue:
+        "No new log was provided for continuation analysis.",
+
+      confidenceLevel: "High",
+
+      probabilityBreakdown: [
+        "100% - Same log reused from previous diagnostic",
+      ],
+
+      mostLikelyCause:
+        "The system detected that the relevant portion of this log is identical to the previous one.",
+
+      recommendedFixSteps: [
+        "Launch the game again and reproduce the issue or test changes.",
+        "Load the newest crash or SMAPI log after that session.",
+        "Run FixMyGame again with the updated log.",
+      ],
+
+      needMoreInfo:
+        "A new log is required before FixMyGame can compare changes between runs.",
+
+      detectedSignals: {
+        suspectedMods: [],
+        likelyCategory: "no_new_log",
+      },
+    };
+  } else if (shouldUseAiEvenIfHealthy) {
     try {
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -797,10 +1433,38 @@ ${crashLog}
       });
 
       const content = completion.choices[0]?.message?.content ?? "";
-      parsed = JSON.parse(content) as AnalyzeModelResponse;
+      parsed = JSON.parse(content);
     } catch {
-      parsed = fallbackAnalyze(crashLog, safeGameKey, safeGameTitle);
+      parsed = fallbackAnalyze(
+        relevantCrashLog,
+        safeGameKey,
+        safeGameTitle,
+        continuedDiagnostic
+      );
     }
+  } else {
+    parsed = fallbackAnalyze(
+      relevantCrashLog,
+      safeGameKey,
+      safeGameTitle,
+      continuedDiagnostic
+    );
+  }
+} else {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+    });
+
+    const content = completion.choices[0]?.message?.content ?? "";
+    parsed = JSON.parse(content) as AnalyzeModelResponse;
+  } catch {
+    parsed = fallbackAnalyze(relevantCrashLog, safeGameKey, safeGameTitle, continuedDiagnostic);
+  }
+}
 
     const normalized: AnalyzeModelResponse = {
       quickFixFirst: parsed.quickFixFirst || "Temporarily remove the suspected mod and retry launch.",
@@ -823,8 +1487,10 @@ ${crashLog}
           ? parsed.recommendedFixSteps
           : ["Review the crash log and remove the most recently added mod."],
       needMoreInfo:
-        parsed.needMoreInfo ||
-        "Provide the full crash report and complete mod list for more accuracy.",
+  parsed.needMoreInfo ||
+  (parsed.detectedSignals?.likelyCategory === "advisory_empty_folder"
+    ? "If the same warning still appears after cleanup, launch the game again and load the newest SMAPI log."
+    : "If the issue continues, provide a newer crash log after the problem happens."),
   detectedSignals: {
   errorType: parsed.detectedSignals?.errorType || "",
   loader: parsed.detectedSignals?.loader || "",
@@ -836,11 +1502,14 @@ ${crashLog}
   likelyCategory: parsed.detectedSignals?.likelyCategory || "unknown",
 },
     };
-    const finalNormalized = applyForcedSuspiciousMod(
-  normalized,
-  forcedSuspiciousMod,
-  typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""
-);
+    const finalNormalized =
+  normalized.detectedSignals?.likelyCategory === "advisory_empty_folder"
+    ? normalized
+    : applyForcedSuspiciousMod(
+        normalized,
+        forcedSuspiciousMod,
+        typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""
+      );
 
     const result = formatPlainText(finalNormalized);
 
