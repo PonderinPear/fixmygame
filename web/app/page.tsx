@@ -2335,7 +2335,7 @@ function getProModalContent(
 }
 
 const GAME_PRESETS = [
-  { key: "minecraft", label: "Minecraft (Modded)" },
+  { key: "minecraft", label: "Minecraft" },
   { key: "sims4", label: "The Sims 4" },
   { key: "skyrimse", label: "Skyrim Special Edition" },
   { key: "gmod", label: "Garry's Mod" },
@@ -2373,7 +2373,7 @@ const GAME_PROFILES: Record<
   }
 > = {
   minecraft: {
-    label: "Minecraft (Modded)",
+    label: "Minecraft",
     supportsAutoDetect: true,
     supportsModsFolder: true,
     supportsLogsFolder: true,
@@ -2632,7 +2632,9 @@ export default function Page() {
   const [hasAcceptedAuthorization, setHasAcceptedAuthorization] = useState(false);
   const [checkingAuthorization, setCheckingAuthorization] = useState(true);
   const [supportTelemetryEnabled, setSupportTelemetryEnabled] = useState(false);
-const [supportSessionId] = useState(() => crypto.randomUUID());
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"privacy" | "app">("privacy");
+  const [supportSessionId] = useState(() => crypto.randomUUID());
 const [supportEventHistory, setSupportEventHistory] = useState<
   {
     id: string;
@@ -2663,6 +2665,8 @@ const [supportEventHistory, setSupportEventHistory] = useState<
   const [scanningLogs, setScanningLogs] = useState(false);
   const [detectingSystemSpecs, setDetectingSystemSpecs] = useState(false);
   const [result, setResult] = useState<string>("");
+  const [hasRunDiagnosticThisSession, setHasRunDiagnosticThisSession] = useState(false);
+  const [shouldAutoScrollToResult, setShouldAutoScrollToResult] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [folderActionError, setFolderActionError] = useState("");
   const [quickActionFolderError, setQuickActionFolderError] = useState("");
@@ -2733,6 +2737,7 @@ const [supportEventHistory, setSupportEventHistory] = useState<
   originalPath?: string;
   mods?: string[];
 } | null>(null);
+const diagnosticResultRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
   fetchBetaStatus();
@@ -2858,6 +2863,73 @@ const loadedLogSummary = useMemo(
     }),
   [gameTitle, crashLog]
 );
+
+useEffect(() => {
+  if (!shouldAutoScrollToResult || !displayAnalysis || !result || running) return;
+
+  const timer = window.setTimeout(() => {
+    diagnosticResultRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+    setShouldAutoScrollToResult(false);
+  }, 250);
+
+  return () => window.clearTimeout(timer);
+}, [shouldAutoScrollToResult, displayAnalysis, result, running]);
+
+function resetLiveSessionState() {
+  setCrashLog("");
+  setCurrentLogPath("");
+  setDetectedLogs([]);
+  setHasScannedLogs(false);
+  setAutoDetectStatus("idle");
+
+  setResult("");
+  setHasRunDiagnosticThisSession(false);
+  setShouldAutoScrollToResult(false);
+  setAnalysis(null);
+  setDetectedSignals(null);
+
+  setQuickSignals({});
+  setLogHighlights([]);
+  setLiveMods([]);
+  setMostSuspiciousLine(null);
+
+  setErrorMsg("");
+  setFolderActionError("");
+  setQuickActionFolderError("");
+  setActionMsg("");
+  setActionMsgLocation(null);
+
+  setFixExecutionResults([]);
+  setLastFixResult(null);
+  setShowFixFeedback(false);
+
+  setContinuedDiagnosticBase(null);
+  setResultFollowupMessage("");
+  setResultFollowupTone(null);
+  setShowDiagnosticRefineBox(false);
+  setDiagnosticRefineMode(null);
+  setDiagnosticRefineText("");
+  setShowAdditionalRefineLogBox(false);
+  setAdditionalRefineLog("");
+
+  setShowFixGuide(false);
+  setShowFixPreviewModal(false);
+}
+
+function toggleSupportTelemetry() {
+  const next = !supportTelemetryEnabled;
+  setSupportTelemetryEnabled(next);
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(
+      SUPPORT_TELEMETRY_STORAGE_KEY,
+      next ? "true" : "false"
+    );
+  }
+}
 
 function applyDetectedGameOnce(detectedGame: string | null) {
   if (!detectedGame) return;
@@ -3224,11 +3296,18 @@ const canApplySafeFix =
   Boolean(gameInstallPath) &&
   safeFixSuspects.length > 0;
 
-const hasDiagnosticResult = Boolean(displayAnalysis && result);
+const hasDiagnosticResult = Boolean(
+  hasRunDiagnosticThisSession && displayAnalysis && result
+);
 const canUndoLastFix = hasDiagnosticResult && Boolean(lastFixResult?.movedFile);
 
 useEffect(() => {
 if (typeof window !== "undefined") {
+  resetLiveSessionState();
+
+  setCopied(false);
+  setSaved(false);
+
   const savedAuthorization = window.localStorage.getItem(APP_AUTH_STORAGE_KEY);
   setHasAcceptedAuthorization(savedAuthorization === "true");
   setCheckingAuthorization(false);
@@ -3557,19 +3636,30 @@ await sendSupportSnapshot(
 
     const response = await window.fixMyGame.undoLastFix();
 
-    if (!response?.ok) {
-  const detail = response?.error || "Undo Last Fix failed.";
+   if (!response?.ok) {
+  const rawDetail = response?.error || "Undo Last Fix failed.";
+  const isNoUndoCase =
+    rawDetail.toLowerCase().includes("no previous fix was found to undo");
+
+  const detail = isNoUndoCase
+    ? "There isn’t a recent Safe Fix to undo yet."
+    : rawDetail;
 
   setFixExecutionResults([
     {
       id: "undo_fix_failed",
-      title: "Undo Last Fix failed",
+      title: isNoUndoCase ? "Nothing to undo yet" : "Undo Last Fix failed",
       ok: false,
       detail,
     },
   ]);
 
-  setErrorMsg(detail);
+  if (!isNoUndoCase) {
+    setErrorMsg(detail);
+  } else {
+    showActionMessage(detail, "fixAssistant");
+  }
+
   return;
 }
 
@@ -3752,7 +3842,12 @@ setLogHighlights(extractLogHighlights(contents, activeGameKey));
 setLiveMods(extractModsFromLog(contents, activeGameKey));
 setMostSuspiciousLine(getMostSuspiciousLine(contents, activeGameKey));
 
-await runDiagnostic(contents);
+showActionMessage(
+  buildLoadedLogSummary({
+    crashLog: contents,
+  }) || `Loaded latest ${gameTitle} log.`,
+  "fixAssistant"
+);
   } catch {
     setErrorMsg("Failed to scan the selected folder.");
   }
@@ -3824,8 +3919,6 @@ showActionMessage(
   }) || `Loaded latest ${gameTitle} log.`,
   "fixAssistant"
 );
-
-await runDiagnostic(contents);
 }
 
   } catch {
@@ -4159,7 +4252,10 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
   }
 }
 
-  async function runDiagnostic(overrideCrashLog?: string) {
+  async function runDiagnostic(
+  overrideCrashLog?: string,
+  options?: { autoScroll?: boolean }
+) {
     setErrorMsg("");
     setResult("");
 
@@ -4167,6 +4263,7 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
     setAnalysis(null);
     
     const logToUse = overrideCrashLog ?? crashLog;
+    const autoScroll = options?.autoScroll ?? true;
 
 if (typeof logToUse !== "string" || !logToUse.trim()) {
   setErrorMsg("Paste a crash log / error first.");
@@ -4237,6 +4334,8 @@ const nextAnalysis = data.analysis ?? null;
 const nextDetectedSignals = data.detectedSignals ?? null;
 
 setResult(nextResult);
+setHasRunDiagnosticThisSession(true);
+setShouldAutoScrollToResult(autoScroll);
 setAnalysis(nextAnalysis);
 setDetectedSignals(nextDetectedSignals);
 setShowDiagnosticRefineBox(false);
@@ -4643,15 +4742,32 @@ async function openGameSettingsQuickAction() {
 }
   return (
     <main className="mx-auto w-full max-w-[900px] px-4 py-12 text-white">
+  <div className="flex items-start justify-between gap-4">
+    <div className="min-w-0">
       <h1 className="text-4xl font-extrabold tracking-tight">
         FixMyGame: AI Crash Diagnostics for Modded Games
       </h1>
 
       <p className="mt-3 max-w-3xl text-white/80">
-  Diagnose crash logs and mod conflicts for Minecraft, The Sims 4, Skyrim,
-  Fallout 4, and other modded PC games. Detect dependency issues, plugin
-  failures, loader mismatches, and GPU/driver faults.
-</p>
+        Diagnose crash logs and mod conflicts for Minecraft, The Sims 4, Skyrim,
+        Fallout 4, and other modded PC games. Detect dependency issues, plugin
+        failures, loader mismatches, and GPU/driver faults.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={() => {
+        setSettingsTab("privacy");
+        setShowSettingsModal(true);
+      }}
+      className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-lg text-white/80 transition hover:bg-white/10 hover:text-white"
+      aria-label="Open settings"
+      title="Settings"
+    >
+      ⚙️
+    </button>
+  </div>
 
 <div className="mt-6 flex flex-wrap gap-2">
   {topFeaturePills.map((pill, index) => {
@@ -5209,21 +5325,27 @@ if (value.trim().length > 40) {
     🧭 View Step-by-Step Guide
   </button>
 
+  <div className="rounded-xl bg-black/20 px-4 py-3 text-left text-white">
   <button
     type="button"
     onClick={() => {
-  if (!fixPlan) {
-    setErrorMsg("Run a diagnostic first.");
-    return;
-  }
-  setFixPreviewError("");
-  setShowFixPreviewModal(true);
-}}
+      if (!fixPlan) {
+        setErrorMsg("Run a diagnostic first.");
+        return;
+      }
+      setFixPreviewError("");
+      setShowFixPreviewModal(true);
+    }}
     disabled={!hasDiagnosticResult || !fixPlan}
-    className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+    className="w-full text-left text-white transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
   >
     🛠️ Fix This for Me
   </button>
+
+  <p className="mt-2 ml-6 text-xs text-white/60">
+  FixMyGame backs up files first and only applies supported safe fixes.
+</p>
+</div>
 
 <button
   type="button"
@@ -5252,7 +5374,7 @@ if (value.trim().length > 40) {
   </div>
 
   <div className="mt-3 text-xs text-white/55">
-    FixMyGame can guide you through a fix or safely handle simple fixes for you.
+    FixMyGame can explain the fix, guide you through it, or safely handle supported fixes for you.
   </div>
 </div>
 
@@ -5369,7 +5491,7 @@ if (value.trim().length > 40) {
         </div>
       </section>
 
-{displayDetectedSignals ? (
+{hasRunDiagnosticThisSession && displayDetectedSignals ? (
   <section className="mt-6 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.45)] p-5">
     <div className="text-xs font-semibold tracking-widest text-white/70">
       DETECTED SIGNALS
@@ -5424,7 +5546,7 @@ if (value.trim().length > 40) {
   </div>
 ) : null}
 
-{displayAnalysis ? (
+{hasRunDiagnosticThisSession && displayAnalysis ? (
   <section className="mt-6 rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.45)] p-5">
     <div className="text-xs font-semibold tracking-widest text-white/70">
       SMART FIX PATH
@@ -5530,8 +5652,8 @@ setTimeout(() => {
   </section>
 ) : null}
 
-<section className="mt-6">
-  {displayAnalysis ? (
+<section ref={diagnosticResultRef} className="mt-6">
+  {hasRunDiagnosticThisSession && displayAnalysis ? (
     <div className="rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-semibold tracking-widest text-white/70">
@@ -5580,6 +5702,48 @@ setTimeout(() => {
   {displayAnalysis.quickFixFirst}
 </div>
         </div>
+
+        <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
+  <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+    TAKE ACTION
+  </div>
+
+  <div className="mt-3 flex flex-wrap gap-2">
+    <button
+      type="button"
+      onClick={applyQuickFix}
+      disabled={!hasDiagnosticResult}
+      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/85 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      ⚡ Copy Recommended Fix
+    </button>
+
+    <button
+      type="button"
+      onClick={openStepByStepGuide}
+      disabled={!hasDiagnosticResult}
+      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/85 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      🧭 View Step-by-Step Guide
+    </button>
+
+    <button
+      type="button"
+      onClick={() => {
+        if (!fixPlan) {
+          setErrorMsg("Run a diagnostic first.");
+          return;
+        }
+        setFixPreviewError("");
+        setShowFixPreviewModal(true);
+      }}
+      disabled={!hasDiagnosticResult || !fixPlan}
+      className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      🛠️ Fix This for Me
+    </button>
+  </div>
+</div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -5838,6 +6002,133 @@ setTimeout(() => {
 </div>
   )}
 </section>
+
+{showSettingsModal ? (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+    onClick={() => setShowSettingsModal(false)}
+  >
+    <div
+      className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+            SETTINGS
+          </div>
+          <h2 className="mt-2 text-2xl font-bold text-white">
+            FixMyGame Settings
+          </h2>
+          <p className="mt-2 text-sm text-white/70">
+            Control privacy, diagnostics, and local app preferences.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowSettingsModal(false)}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-5 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setSettingsTab("privacy")}
+          className={[
+            "rounded-xl px-4 py-2 text-sm font-medium transition",
+            settingsTab === "privacy"
+              ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+              : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+          ].join(" ")}
+        >
+          Privacy
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSettingsTab("app")}
+          className={[
+            "rounded-xl px-4 py-2 text-sm font-medium transition",
+            settingsTab === "app"
+              ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+              : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+          ].join(" ")}
+        >
+          App
+        </button>
+      </div>
+
+      {settingsTab === "privacy" ? (
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+            PRIVACY & DIAGNOSTICS
+          </div>
+
+          <div className="mt-4 flex items-start justify-between gap-4">
+            <div>
+              <div className="font-medium text-white">
+                Help improve FixMyGame by sharing anonymous diagnostic data
+              </div>
+              <p className="mt-2 text-sm text-white/60">
+                Includes crash patterns, detected issues, and fix results. No unrelated personal files are collected.
+              </p>
+              <p className="mt-2 text-xs text-white/45">
+                Current status: {supportTelemetryEnabled ? "On" : "Off"}
+              </p>
+            </div>
+
+            <label className="relative inline-flex h-7 w-14 shrink-0 cursor-pointer items-center">
+  <input
+    type="checkbox"
+    checked={supportTelemetryEnabled}
+    onChange={toggleSupportTelemetry}
+    className="peer sr-only"
+    aria-label="Share anonymous diagnostic data"
+  />
+  <span className="absolute inset-0 rounded-full bg-white/15 transition peer-checked:bg-cyan-400" />
+  <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition peer-checked:left-8" />
+</label>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+            APP PREFERENCES
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <button
+              type="button"
+              onClick={resetSavedSystemPrefs}
+              className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-white/85 transition hover:bg-white/10 hover:text-white"
+            >
+              Reset saved system fields
+            </button>
+
+            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/60">
+              This resets saved game, GPU, driver version, and graphics API preferences on this device.
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-6 flex justify-end">
+        <button
+          type="button"
+          onClick={() => setShowSettingsModal(false)}
+          className="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 transition hover:bg-cyan-300"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
 {showFixGuide && displayAnalysis ? (
   <div
     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
@@ -6313,9 +6604,9 @@ setTimeout(() => {
   </div>
 ) : null}
 {!checkingAuthorization && !hasAcceptedAuthorization ? (
-  <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/80 px-4 py-6">
+  <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/80 px-4 py-6">
     <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#071224] shadow-2xl">
-      <div className="max-h-[88vh] overflow-y-auto p-6 pr-4">
+      <div className="max-h-[85vh] overflow-y-auto p-6 pr-4">
       <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
         BEFORE YOU CONTINUE
       </div>

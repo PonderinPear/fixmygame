@@ -8,6 +8,7 @@ export default function FixMyGameWebsite() {
     "Cyberpunk 2077",
     "Baldur's Gate 3",
     "Project Zomboid",
+    "+ More coming"
   ];
 
   const features = [
@@ -34,10 +35,22 @@ export default function FixMyGameWebsite() {
 ];
 
   const steps = [
-  "Load your log",
-  "We find the issue",
-  "Apply the fix (or let us do it)",
-  "Done",
+  {
+    title: "Load your log",
+    description: "Paste a crash log or use supported auto-detect options.",
+  },
+  {
+    title: "We find the issue",
+    description: "FixMyGame highlights likely causes, broken mods, and missing dependencies.",
+  },
+  {
+    title: "Apply the fix",
+    description: "Use guided steps or supported Safe Fix actions when available.",
+  },
+  {
+    title: "Get back in game",
+    description: "Retest, continue diagnostics, or undo supported fixes if needed.",
+  },
 ];
 
   const faqs = [
@@ -59,6 +72,12 @@ export default function FixMyGameWebsite() {
     },
   ];
 
+const betaRequestUrl = "https://docs.google.com/forms/d/e/1FAIpQLScGcdRTg2kv4-_NKk1x2MkjSd1QsVItjKxi0ht--HNf1GLngQ/viewform?usp=publish-editor";
+const betaTermsUrl = "https://www.notion.so/fixmygame/FixMyGame-Beta-Agreement-341948d92478803ab0b3c93d13335e58?source=copy_link";
+const privacyUrl = "https://www.notion.so/fixmygame/FixMyGame-Privacy-Policy-348948d9247880b4b896c729d957235e?source=copy_link";
+const supportUrl = "mailto:fixmygame.support@gmail.com";
+const termsUrl = "https://www.notion.so/fixmygame/FixMyGame-Terms-of-Service-348948d924788019abe8cb5e79581c76?source=copy_link";
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
@@ -78,9 +97,14 @@ export default function FixMyGameWebsite() {
           </nav>
 
           <div className="flex items-center gap-2">
-  <button className="rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300">
+  <a
+    href={betaRequestUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="rounded-xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+  >
     Request Beta Access
-  </button>
+  </a>
 </div>
         </header>
 
@@ -102,9 +126,14 @@ export default function FixMyGameWebsite() {
               </p>
 
               <div className="mt-8 flex flex-wrap gap-3">
-  <button className="rounded-2xl bg-cyan-400 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-300">
+  <a
+    href={betaRequestUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="rounded-2xl bg-cyan-400 px-6 py-3 font-semibold text-slate-950 transition hover:bg-cyan-300"
+  >
     Request Beta Access
-  </button>
+  </a>
 </div>
 
               <p className="mt-4 text-sm text-white/50">
@@ -246,7 +275,7 @@ export default function FixMyGameWebsite() {
                 Works with real modded setups — not just clean installs.
               </p>
 
-              <div className="mt-6 flex flex-wrap gap-3">
+              <div className="mt-6 flex flex-wrap gap-3 justify-center">
                 {supportedGames.map((game) => (
                   <span
                     key={game}
@@ -260,26 +289,30 @@ export default function FixMyGameWebsite() {
           </section>
 
           <section id="how" className="py-8 md:py-14">
-            <div className="mb-6">
-              <div className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-200/70">How it works</div>
-              <h2 className="mt-2 text-3xl font-bold md:text-4xl">From crash log to next move</h2>
-            </div>
+  <div className="mx-auto max-w-6xl px-6">
+    <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
+      From crash log to next move
+    </h2>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {steps.map((step, index) => (
-                <div key={step} className="rounded-[24px] border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-400 font-bold text-slate-950">
-                      {index + 1}
-                    </div>
-                    <div className="text-lg font-semibold">{step}</div>
-                  </div>
-                </div>
-              ))}
+    <div className="mt-6 grid gap-4 md:grid-cols-2">
+      {steps.map((step, index) => (
+        <div key={step.title} className="rounded-[24px] border border-white/10 bg-white/5 p-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-400 font-bold text-slate-950">
+              {index + 1}
             </div>
-          </section>
+            <div>
+              <div className="text-lg font-semibold">{step.title}</div>
+              <p className="mt-1 text-sm leading-6 text-white/68">{step.description}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
 
-          <section className="py-8 md:py-14">
+          <section id="beta" className="py-8 md:py-14">
   <div className="rounded-[28px] border border-white/10 bg-cyan-400/10 p-6 md:p-8">
     <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
       Private beta
@@ -292,14 +325,52 @@ export default function FixMyGameWebsite() {
     </p>
 
     <div className="mt-5 flex flex-wrap gap-3">
-      <button className="rounded-2xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-300">
+      <a
+        href={betaRequestUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="rounded-2xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-300"
+      >
         Request Beta Access
-      </button>
+      </a>
     </div>
 
-    <p className="mt-4 text-sm text-white/50">
-      Approved testers receive the Windows beta build directly.
-    </p>
+    <div className="mt-4 space-y-2 text-sm text-white/55">
+  <p>
+    By requesting access, you agree to the{" "}
+    <a
+      href={betaTermsUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-cyan-300 hover:text-cyan-200"
+    >
+      Beta Agreement
+    </a>
+    ,{" "}
+    <a
+      href={termsUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-cyan-300 hover:text-cyan-200"
+    >
+      Terms of Service
+    </a>
+    , and{" "}
+    <a
+      href={privacyUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-cyan-300 hover:text-cyan-200"
+    >
+      Privacy Policy
+    </a>
+    .
+  </p>
+
+  <p className="text-sm text-cyan-300/80">
+    Approved testers who actively provide useful feedback during beta will receive a discounted Pro subscription for life on the email they used to join beta.
+  </p>
+</div>
   </div>
 </section>
 
@@ -327,11 +398,25 @@ export default function FixMyGameWebsite() {
               <div>AI crash diagnostics for modded PC games.</div>
             </div>
             <div className="flex flex-wrap gap-4">
-              <a href="#" className="hover:text-white">Download</a>
-              <a href="#" className="hover:text-white">Support</a>
-              <a href="#" className="hover:text-white">Privacy</a>
-              <a href="#" className="hover:text-white">Terms</a>
-            </div>
+  <a href="#beta" className="hover:text-white">Download</a>
+  <a href={supportUrl} className="hover:text-white">Support</a>
+  <a
+    href={privacyUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="hover:text-white"
+  >
+    Privacy
+  </a>
+  <a
+    href={termsUrl}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="hover:text-white"
+  >
+    Terms
+  </a>
+</div>
           </div>
         </footer>
       </div>
