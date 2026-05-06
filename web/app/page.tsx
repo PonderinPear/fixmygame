@@ -4905,21 +4905,21 @@ await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
 
 async function upgradeToPro() {
   setErrorMsg("");
+
   try {
-    const data = await fetchJSON<CheckoutResponse>(`${API_BASE_URL}/api/checkout`, {
+    const data = await fetchJSON<CheckoutResponse>("/api/checkout", {
       method: "POST",
       body: JSON.stringify({}),
     });
 
-    if (!data.url) {
-      throw new Error("Checkout failed.");
+    if (!data?.url || typeof data.url !== "string") {
+      throw new Error("Checkout failed. No Stripe checkout link was returned.");
     }
 
-    window.location.href = data.url;
+    window.location.assign(data.url);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Checkout failed.";
     setErrorMsg(msg);
-    alert("Checkout failed.");
   }
 }
 function buildDiagnosticResultText(
