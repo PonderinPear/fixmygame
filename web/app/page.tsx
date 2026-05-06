@@ -4761,12 +4761,22 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
       eventDetail,
     });
 
-    await fetchJSON<{ ok: boolean }>("/api/support-snapshot", {
-      method: "POST",
-      body: JSON.stringify(snapshot),
-    });
-  } catch {
-    // silent by design
+    const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
+      "/api/support-snapshot",
+      {
+        method: "POST",
+        body: JSON.stringify(snapshot),
+      }
+    );
+
+    console.log("Support snapshot sent:", response);
+  } catch (error) {
+    console.error("Support snapshot failed:", error);
+    setErrorMsg(
+      error instanceof Error
+        ? `Support snapshot failed: ${error.message}`
+        : "Support snapshot failed."
+    );
   }
 }
 
