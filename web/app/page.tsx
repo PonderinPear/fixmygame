@@ -56,6 +56,23 @@ closeApp?: () => Promise<{
   ok?: boolean;
   error?: string;
 }>;
+findMissingModOnDevice?: (payload: {
+  gameKey: string;
+  modName: string;
+}) => Promise<MissingModRecoveryResult>;
+
+moveFoundModToModsFolder?: (payload: {
+  gameKey: string;
+  modName: string;
+  sourcePath: string;
+}) => Promise<{
+  moved: boolean;
+  alreadyInCorrectPlace?: boolean;
+  sourcePath: string;
+  destinationPath: string;
+}>;
+
+openExternalUrl?: (url: string) => Promise<{ opened: boolean }>;
 applySafeFix?: (payload: {
   gameKey: string;
   installPath: string;
@@ -105,6 +122,23 @@ copyText?: (text: string) => Promise<{
     };
   }
 }
+
+type MissingModRecoveryResult = {
+  found: boolean;
+  foundPath: string;
+  expectedPath: string;
+  allMatches?: {
+    path: string;
+    itemType: "file" | "folder";
+    candidateKind: "mod_folder" | "mod_file" | "archive_file";
+    name: string;
+  }[];
+  alreadyInCorrectPlace?: boolean;
+  justMovedToCorrectPlace?: boolean;
+  searchedRoots?: string[];
+  foundItemType?: string;
+  foundCandidateKind?: string;
+};
 
 type LimitResponse = {
   isPro: boolean;
@@ -210,6 +244,32 @@ const FIX_HISTORY_STORAGE_KEY = "fmg_fix_history";
 const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
+
+const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
+
+type AppSettings = {
+  enableSafeFix: boolean;
+  askBeforeFixing: boolean;
+  createBackupBeforeFix: boolean;
+  autoDetectGames: boolean;
+  rememberLastGamePath: boolean;
+  showAdvancedDetails: boolean;
+  highlightSuspiciousLine: boolean;
+  showProbabilityBreakdown: boolean;
+  saveFixHistory: boolean;
+};
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  enableSafeFix: true,
+  askBeforeFixing: true,
+  createBackupBeforeFix: true,
+  autoDetectGames: true,
+  rememberLastGamePath: true,
+  showAdvancedDetails: true,
+  highlightSuspiciousLine: true,
+  showProbabilityBreakdown: true,
+  saveFixHistory: true,
+};
 
 function loadFixHistory(): FixHistoryItem[] {
   if (typeof window === "undefined") return [];
@@ -361,10 +421,37 @@ function getFixPlan(
         : category === "mod_conflict"
         ? "Mod conflict repair preview"
         : "Repair preview",
-    description:
-  "FixMyGame can now perform one supported Safe Fix flow: backing up and quarantining a likely broken mod or folder. More advanced automatic repairs will come later.",
+    description: getFixPlanDescription(category),
     actions,
   };
+}
+
+function getFixPlanDescription(category: string) {
+  if (category === "missing_dependency") {
+    return "FixMyGame found a missing required mod or dependency. Use the download button to open the correct mod page, then install it into your Mods folder.";
+  }
+
+  if (category === "mod_conflict") {
+    return "FixMyGame can back up and quarantine the most likely broken mod or folder.";
+  }
+
+  if (category === "loader_mismatch") {
+    return "This result needs a manual version fix. Update the plugin, loader, or framework so everything matches the same game runtime.";
+  }
+
+  if (category === "game_files_corrupt") {
+    return "This result needs a manual game-file repair. Verify or reinstall the game files before removing mods.";
+  }
+
+  if (category === "java_mismatch") {
+    return "This result needs a manual Java/runtime fix. Install the required Java version and point your launcher to it.";
+  }
+
+  if (category === "mixin_failure") {
+  return "A mod failed while patching Minecraft. Update the mod named in the error, or temporarily remove it if no compatible update exists.";
+}
+
+  return "Follow the recommended steps below. Automatic repair is not available for this result yet.";
 }
 
 function getRiskClasses(risk: FixAction["risk"]) {
@@ -495,6 +582,19 @@ const stardewSkippedEmptyFolderMod =
       ...(analysis?.recommendedFixSteps?.length
         ? analysis.recommendedFixSteps
         : ["Review the warning and apply the suggested cleanup."]),
+    ],
+  };
+}
+
+if (category === "game_files_corrupt") {
+  return {
+    title: "Game files missing or corrupted",
+    bullets: [
+      analysis?.quickFixFirst || "Verify Stardew Valley’s game files through Steam.",
+      analysis?.mostLikelyCause ||
+        "A required Stardew Valley Content file is missing or corrupted.",
+      "Do not remove mods yet — this result points to missing base game files, not a mod conflict.",
+      "After Steam finishes verifying files, launch Stardew Valley again and load the newest log if it still fails.",
     ],
   };
 }
@@ -873,15 +973,19 @@ if (category === "no_clear_issue_found") {
 
   switch (category) {
     case "java_mismatch":
-      return {
-        title: "Java version mismatch detected",
-        bullets: [
-          `Install Java 17 or the version required by your modpack.`,
-          loader ? `Recheck your ${loader} launcher profile after updating Java.` : "Recheck your launcher profile after updating Java.",
-          javaVersion ? `Current detected Java: ${javaVersion}` : "Your current Java version may be too old.",
-          "Point the launcher to the new Java executable and relaunch.",
-        ],
-      };
+  return {
+    title: "Java version mismatch detected",
+    bullets: [
+      "Install Java 17 or the version required by your modpack.",
+      loader
+        ? `Set the ${loader} launcher to use the new Java version.`
+        : "Set your launcher to use the new Java version.",
+      javaVersion
+        ? `Current detected Java: ${javaVersion} (too old)`
+        : "Your current Java version may be too old.",
+      "Relaunch the game after updating Java.",
+    ],
+  };
 
     case "out_of_memory":
       return {
@@ -930,15 +1034,16 @@ if (category === "no_clear_issue_found") {
       };
 
     case "shader_crash":
-      return {
-        title: "Shader or rendering crash detected",
-        bullets: [
-          "Disable shaders first and relaunch.",
-          "Temporarily remove OptiFine, Iris, Oculus, Sodium, or Rubidium one at a time.",
-          "Lower graphics settings and test again.",
-          "Update GPU drivers if the crash continues.",
-        ],
-      };
+  return {
+    title: "Shader or rendering crash detected",
+    bullets: [
+      "Disable shaders first and relaunch.",
+      "Lower shader quality or resolution before removing the shader pack.",
+      "Temporarily remove OptiFine, Iris, Oculus, Sodium, or Rubidium one at a time.",
+      "Lower graphics settings and test again.",
+      "Update GPU drivers if the crash continues.",
+    ],
+  };
 
     case "gpu_driver_issue":
       return {
@@ -1064,6 +1169,78 @@ function buildUniversalFallbackOverride({
 }): AnalyzeResponse["analysis"] | null {
   const lowerCrashLog = String(crashLog || "").toLowerCase();
 
+  const skyrimRuntimeMismatchMatch = crashLog.match(
+  /plugin\s+([A-Za-z0-9_.-]+\.dll)[\s\S]*?reported as incompatible[\s\S]*?expected runtime\s+([0-9.]+),\s*got\s+([0-9.]+)/i
+);
+
+if (gameTitle === "Skyrim Special Edition" && skyrimRuntimeMismatchMatch) {
+  const pluginName = skyrimRuntimeMismatchMatch[1] || "the SKSE plugin";
+  const expectedRuntime = skyrimRuntimeMismatchMatch[2] || "the expected runtime";
+  const currentRuntime = skyrimRuntimeMismatchMatch[3] || "your current runtime";
+
+  return {
+    quickFixFirst: `Update ${pluginName} for Skyrim runtime ${currentRuntime}.`,
+    issue: `${pluginName} is built for Skyrim runtime ${expectedRuntime}, but your game is running runtime ${currentRuntime}.`,
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      `100% - ${pluginName} runtime version mismatch`,
+    ],
+    mostLikelyCause: `${pluginName} does not match your current Skyrim/SKSE runtime version.`,
+    recommendedFixSteps: [
+      `Download the version of ${pluginName} made for Skyrim runtime ${currentRuntime}.`,
+      `Replace the old ${pluginName} file in your SKSE Plugins folder.`,
+      "Make sure SKSE, Address Library, and DLL plugins all match the same Skyrim runtime.",
+      "Relaunch Skyrim after updating the plugin.",
+    ],
+    needMoreInfo:
+      "If the crash continues, provide the updated SKSE log and exact Skyrim runtime/SKSE versions.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType: "SkyrimRuntimeMismatch",
+      loader: "SKSE / Mod Manager",
+      gameVersion: currentRuntime,
+      javaVersion: "",
+      suspectedMods: [pluginName.replace(/\.dll$/i, ""), "skse"],
+      likelyCategory: "loader_mismatch",
+    },
+  };
+}
+
+  const isStardewBaseGameFileMissing =
+  gameTitle === "Stardew Valley" &&
+  lowerCrashLog.includes("filenotfoundexception") &&
+  lowerCrashLog.includes("content\\") &&
+  (lowerCrashLog.includes(".xnb") || lowerCrashLog.includes(".xgs"));
+
+if (isStardewBaseGameFileMissing) {
+  return {
+    quickFixFirst: "Verify Stardew Valley’s game files through Steam.",
+    issue:
+      "Stardew Valley is missing or unable to load a required base game file.",
+    confidenceLevel: "High",
+    probabilityBreakdown: ["100% - Missing or corrupted base game files"],
+    mostLikelyCause:
+      "A required Stardew Valley Content file, such as an .xnb or .xgs asset, is missing or corrupted.",
+    recommendedFixSteps: [
+      "Open Steam.",
+      "Right-click Stardew Valley.",
+      "Choose Properties.",
+      "Go to Installed Files.",
+      "Click Verify integrity of game files.",
+      "Launch Stardew Valley again after Steam finishes.",
+    ],
+    needMoreInfo:
+      "If verifying files does not fix it, reinstall Stardew Valley or load the newest SMAPI log after the next failed launch.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      loader: "SMAPI",
+      likelyCategory: "game_files_corrupt",
+      suspectedMods: [],
+      errorType: "FileNotFoundException",
+    },
+  };
+}
+
   if (!analysis && !detectedSignals) {
     return {
       quickFixFirst: `Start by checking the newest ${gameTitle} log for the first clear error or failed mod/plugin line.`,
@@ -1149,7 +1326,7 @@ function buildUniversalFallbackOverride({
           ],
     mostLikelyCause:
       noClearIssue
-        ? `This log still contains warning/error language, so the current “no clear issue” result is probably too weak. A mod, dependency, or setup issue is still more likely.`
+        ? `The warnings shown are normal SMAPI advisory notes, not confirmed crash causes.`
         : weakCause
         ? `A mod/plugin conflict, missing dependency, version mismatch, or incomplete install is more likely than a clean/no-issue state.`
         : analysis!.mostLikelyCause,
@@ -1367,6 +1544,8 @@ function formatCategoryLabel(category?: string, gameKey?: string) {
       return "Mod Conflict";
     case "missing_dependency":
       return "Missing Dependency";
+    case "game_files_corrupt":
+      return "Game Files Missing";
     case "loader_mismatch":
       return "Loader Mismatch";
     case "mixin_failure":
@@ -1377,6 +1556,12 @@ function formatCategoryLabel(category?: string, gameKey?: string) {
       return "Shader Crash";
     case "out_of_memory":
       return "Out of Memory";
+    case "runtime_disconnect":
+      return "Runtime Disconnect";
+    case "network_mod_failure":
+      return "Network / Session Mod Failure";
+    case "game_files_corrupt":
+      return "Game Files Missing";
     default:
       return category
         .split("_")
@@ -2624,9 +2809,14 @@ function getProgressState(params: {
 }
 
 export default function Page() {
-  const [betaOpen, setBetaOpen] = useState(true);
+  const [betaOpen, setBetaOpen] = useState(false);
+  const [missingModRecovery, setMissingModRecovery] =
+  useState<MissingModRecoveryResult | null>(null);
+  const [searchingMissingMod, setSearchingMissingMod] = useState(false);
+  const [movingMissingMod, setMovingMissingMod] = useState(false);
   const [betaMessage, setBetaMessage] = useState("");
   const [checkingBetaStatus, setCheckingBetaStatus] = useState(true);
+  const [showError, setShowError] = useState(false);
   const [selectedGameKey, setSelectedGameKey] = useState("minecraft");
   const [hasAppliedAutoGameDetect, setHasAppliedAutoGameDetect] = useState(false);
   const [hasAcceptedAuthorization, setHasAcceptedAuthorization] = useState(false);
@@ -2634,8 +2824,10 @@ export default function Page() {
   const [supportTelemetryEnabled, setSupportTelemetryEnabled] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"privacy" | "app">("privacy");
+  const [appSettings, setAppSettings] =
+  useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [supportSessionId] = useState(() => crypto.randomUUID());
-const [supportEventHistory, setSupportEventHistory] = useState<
+  const [supportEventHistory, setSupportEventHistory] = useState<
   {
     id: string;
     type: string;
@@ -2684,6 +2876,8 @@ const [supportEventHistory, setSupportEventHistory] = useState<
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showFixGuide, setShowFixGuide] = useState(false);
+  const [currentGuideStep, setCurrentGuideStep] = useState(0);
+  const [completedGuideSteps, setCompletedGuideSteps] = useState<number[]>([]);
   const [showFixPreviewModal, setShowFixPreviewModal] = useState(false);
   const [showFixHistoryModal, setShowFixHistoryModal] = useState(false);
   const [fixPreviewError, setFixPreviewError] = useState("");
@@ -2742,6 +2936,32 @@ const diagnosticResultRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
   fetchBetaStatus();
 }, []);
+
+  useEffect(() => {
+  try {
+    const raw = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+    if (!raw) return;
+
+    const saved = JSON.parse(raw) as Partial<AppSettings>;
+
+    setAppSettings({
+      ...DEFAULT_APP_SETTINGS,
+      ...saved,
+    });
+  } catch {
+    setAppSettings(DEFAULT_APP_SETTINGS);
+  }
+}, []);
+useEffect(() => {
+  try {
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify(appSettings)
+    );
+  } catch {
+    // ignore storage errors
+  }
+}, [appSettings]);
 
   useEffect(() => {
   try {
@@ -2806,17 +3026,7 @@ useEffect(() => {
     runningFixPlan,
   ]
 );
-  const smartFixPath = useMemo(
-  () =>
-    getSmartFixPath(
-      detectedSignals,
-      analysis,
-      selectedGameKey,
-      currentLogPath,
-      crashLog
-    ),
-  [detectedSignals, analysis, selectedGameKey, currentLogPath, crashLog]
-);
+
 
 const selectedGame = useMemo(
   () => GAME_PRESETS.find((g) => g.key === selectedGameKey) ?? SORTED_GAME_PRESETS[0],
@@ -2855,6 +3065,24 @@ const displayAnalysis =
 const displayDetectedSignals =
   displayAnalysis?.detectedSignals ||
   detectedSignals;
+
+  const smartFixPath = useMemo(
+  () =>
+    getSmartFixPath(
+      displayDetectedSignals,
+      displayAnalysis,
+      selectedGameKey,
+      currentLogPath,
+      crashLog
+    ),
+  [
+    displayDetectedSignals,
+    displayAnalysis,
+    selectedGameKey,
+    currentLogPath,
+    crashLog,
+  ]
+);
 
 const loadedLogSummary = useMemo(
   () =>
@@ -2917,6 +3145,192 @@ function resetLiveSessionState() {
 
   setShowFixGuide(false);
   setShowFixPreviewModal(false);
+}
+
+function getKnownMissingModDownloadUrl(modName: string) {
+  const normalized = String(modName || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  if (
+  normalized.includes("fabric api") ||
+  normalized.includes("fabricapi")
+) {
+  return "https://modrinth.com/mod/fabric-api";
+}
+
+  if (normalized.includes("content patcher")) {
+    return "https://www.nexusmods.com/stardewvalley/mods/1915";
+  }
+
+  if (normalized.includes("smapi")) {
+    return "https://smapi.io/";
+  }
+
+  return "";
+}
+
+function getPrimaryMissingModName() {
+  const steps = displayAnalysis?.recommendedFixSteps || [];
+  const rawText = [
+    displayAnalysis?.quickFixFirst || "",
+    displayAnalysis?.issue || "",
+    displayAnalysis?.mostLikelyCause || "",
+    ...steps,
+    crashLog || "",
+  ].join("\n");
+
+  const contentPatcherMatch = rawText.match(/content patcher/i);
+  if (contentPatcherMatch) return "Content Patcher";
+
+  const fabricApiMatch = rawText.match(/\bfabric[-\s]?api\b/i);
+if (fabricApiMatch) return "Fabric API";
+
+  const genericMatch =
+    rawText.match(/missing mod called ([A-Za-z0-9 '\-\[\]\(\)&._]+)/i) ||
+    rawText.match(/requires mods? which aren't installed \(([^:]+):/i) ||
+    rawText.match(/install the missing ([A-Za-z0-9 '\-\[\]\(\)&._]+) mod/i);
+
+  return genericMatch?.[1]?.trim() || "";
+}
+
+function getMissingModDownloadUrl() {
+  const knownUrl = getKnownMissingModDownloadUrl(primaryMissingModName);
+  if (knownUrl) return knownUrl;
+
+  const combined = [
+    ...(displayAnalysis?.recommendedFixSteps || []),
+    displayAnalysis?.issue || "",
+    displayAnalysis?.mostLikelyCause || "",
+    crashLog || "",
+  ].join("\n");
+
+  const match = combined.match(/https?:\/\/[^\s)]+/i);
+  return match?.[0] || "";
+}
+
+async function searchForMissingModOnDevice() {
+  const modName = missingModRecoveryTarget;
+  if (!modName) {
+    setErrorMsg("No missing mod name could be identified from this diagnosis.");
+    return;
+  }
+
+  if (!window.fixMyGame?.findMissingModOnDevice) {
+    setErrorMsg("Missing-mod recovery is only available in the desktop app.");
+    return;
+  }
+
+  try {
+    setSearchingMissingMod(true);
+    setErrorMsg("");
+    setMissingModRecovery(null);
+
+    const result = await window.fixMyGame.findMissingModOnDevice({
+      gameKey: selectedGameKey,
+      modName,
+    });
+
+    setMissingModRecovery(result);
+
+    if (result.found) {
+      showActionMessage(
+        result.alreadyInCorrectPlace
+          ? `${modName} is already in the correct Mods folder.`
+          : `${modName} was found on this device.`,
+        "fixAssistant"
+      );
+    } else {
+      showActionMessage(
+        `${modName} was not found in the common local mod locations we searched.`,
+        "fixAssistant"
+      );
+    }
+  } catch (error) {
+    setErrorMsg(
+      error instanceof Error ? error.message : "Failed to search for the missing mod."
+    );
+  } finally {
+    setSearchingMissingMod(false);
+  }
+}
+
+async function moveFoundModIntoModsFolder() {
+  const modName = missingModRecoveryTarget;
+  if (!modName) {
+    setErrorMsg("No missing mod name could be identified from this diagnosis.");
+    return;
+  }
+
+  if (!missingModRecovery?.foundPath) {
+    setErrorMsg("No found mod location is available to move.");
+    return;
+  }
+
+  if (!window.fixMyGame?.moveFoundModToModsFolder) {
+    setErrorMsg("Moving mods is only available in the desktop app.");
+    return;
+  }
+
+  try {
+    setMovingMissingMod(true);
+    setErrorMsg("");
+
+    const result = await window.fixMyGame.moveFoundModToModsFolder({
+      gameKey: selectedGameKey,
+      modName,
+      sourcePath: missingModRecovery.foundPath,
+    });
+
+    setMissingModRecovery((prev) =>
+  prev
+    ? {
+        ...prev,
+        found: true,
+        foundPath: result.destinationPath,
+        expectedPath: result.destinationPath,
+        alreadyInCorrectPlace: false,
+        justMovedToCorrectPlace: !result.alreadyInCorrectPlace,
+      }
+    : prev
+);
+
+    showActionMessage(
+  result.alreadyInCorrectPlace
+    ? `${modName} is already in the correct Mods folder.`
+    : `${modName} was successfully moved into the Mods folder.`,
+  "fixAssistant"
+);
+  } catch (error) {
+    setErrorMsg(
+      error instanceof Error ? error.message : "Failed to move the missing mod."
+    );
+  } finally {
+    setMovingMissingMod(false);
+  }
+}
+
+async function openMissingModDownloadPage() {
+  const url = getMissingModDownloadUrl();
+  if (!url) {
+    setErrorMsg("No download page was found in the diagnosis or log.");
+    return;
+  }
+
+  if (!window.fixMyGame?.openExternalUrl) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  try {
+    await window.fixMyGame.openExternalUrl(url);
+    showActionMessage("Opened the missing mod download page.", "fixAssistant");
+  } catch (error) {
+    setErrorMsg(
+      error instanceof Error ? error.message : "Failed to open the download page."
+    );
+  }
 }
 
 function toggleSupportTelemetry() {
@@ -3107,7 +3521,7 @@ function acceptAuthorizationGate() {
 async function fetchBetaStatus() {
   try {
     const data = await fetchJSON<{ betaOpen: boolean; message?: string }>(
-      `${API_BASE_URL}/api/beta-status`,
+      "/api/beta-status",
       { method: "GET" }
     );
 
@@ -3278,6 +3692,20 @@ const fixPlan = useMemo(
   [selectedGameKey, gameTitle, displayAnalysis, displayDetectedSignals, selectedGameProfile]
 );
 
+const activeSafeFixCategory =
+  displayAnalysis?.detectedSignals?.likelyCategory ||
+  displayDetectedSignals?.likelyCategory ||
+  "";
+
+  const isGameFilesCorrupt =
+  activeSafeFixCategory === "game_files_corrupt";
+
+const isMissingDependency =
+  activeSafeFixCategory === "missing_dependency";
+
+const isModConflict =
+  activeSafeFixCategory === "mod_conflict";
+
 const safeFixSuspects = useMemo(() => {
   const suspectsFromAnalysis =
     displayAnalysis?.detectedSignals?.suspectedMods ||
@@ -3294,12 +3722,90 @@ const safeFixSuspects = useMemo(() => {
 const canApplySafeFix =
   desktopConnected &&
   Boolean(gameInstallPath) &&
-  safeFixSuspects.length > 0;
+  safeFixSuspects.length > 0 &&
+  activeSafeFixCategory === "mod_conflict";
 
 const hasDiagnosticResult = Boolean(
   hasRunDiagnosticThisSession && displayAnalysis && result
 );
 const canUndoLastFix = hasDiagnosticResult && Boolean(lastFixResult?.movedFile);
+
+const primaryMissingModName = getPrimaryMissingModName();
+const missingModDownloadUrl = getMissingModDownloadUrl();
+const missingModAlreadyInstalled =
+  Boolean(missingModRecovery?.found && missingModRecovery.alreadyInCorrectPlace);
+
+const missingModRecoveryTarget = useMemo(() => {
+  if (!displayAnalysis) return "";
+
+  const lowerIssue = (displayAnalysis.issue || "").toLowerCase();
+  const lowerCause = (displayAnalysis.mostLikelyCause || "").toLowerCase();
+  const lowerQuickFix = (displayAnalysis.quickFixFirst || "").toLowerCase();
+  const lowerSteps = (displayAnalysis.recommendedFixSteps || []).join(" ").toLowerCase();
+
+  const category = displayAnalysis.detectedSignals?.likelyCategory || "";
+
+  const stronglyMissingDependency =
+    category === "missing_dependency" &&
+    (
+      lowerIssue.includes("missing mod") ||
+      lowerIssue.includes("missing dependency") ||
+      lowerCause.includes("missing mod") ||
+      lowerCause.includes("missing dependency") ||
+      lowerQuickFix.includes("install") ||
+      lowerQuickFix.includes("missing") ||
+      lowerSteps.includes("install the missing") ||
+      lowerSteps.includes("requires mods which aren't installed") ||
+      lowerSteps.includes("missing dependency")
+    );
+
+  if (!stronglyMissingDependency) return "";
+
+  return primaryMissingModName || "";
+}, [displayAnalysis, primaryMissingModName]);
+
+const shouldShowMissingModRecovery =
+  Boolean(missingModRecoveryTarget) &&
+  displayAnalysis?.detectedSignals?.likelyCategory !== "game_files_corrupt";
+
+useEffect(() => {
+  if (!shouldShowMissingModRecovery) {
+    setMissingModRecovery(null);
+    return;
+  }
+
+  if (!missingModRecoveryTarget) return;
+  if (!window.fixMyGame?.findMissingModOnDevice) return;
+
+  let cancelled = false;
+
+  async function autoSearchMissingMod() {
+      try {
+        if (!window.fixMyGame?.findMissingModOnDevice) {
+          return;
+        }
+  
+        const result = await window.fixMyGame.findMissingModOnDevice({
+          gameKey: selectedGameKey,
+          modName: missingModRecoveryTarget,
+        });
+  
+        if (!cancelled) {
+          setMissingModRecovery(result);
+        }
+      } catch {
+        if (!cancelled) {
+          setMissingModRecovery(null);
+        }
+      }
+    }
+
+  autoSearchMissingMod();
+
+  return () => {
+    cancelled = true;
+  };
+}, [shouldShowMissingModRecovery, missingModRecoveryTarget, selectedGameKey]);
 
 useEffect(() => {
 if (typeof window !== "undefined") {
@@ -3333,7 +3839,7 @@ setSupportTelemetryEnabled(savedSupportTelemetry === "true");
   async function loadLimit() {
     setLoadingLimit(true);
     try {
-      const data = await fetchJSON<LimitResponse>(`${API_BASE_URL}/api/limit`, { method: "GET" });
+    const data = await fetchJSON<LimitResponse>("/api/limit", { method: "GET" });
 
 const debug = await fetchDebugWithRetry();
 
@@ -3504,6 +4010,18 @@ function buildSafeFixPlanPreview(params: {
     setFixPreviewError("No suspected mods were available for Safe Fix.");
     return;
   }
+
+  const safeFixCategory =
+  displayAnalysis?.detectedSignals?.likelyCategory ||
+  displayDetectedSignals?.likelyCategory ||
+  "";
+
+if (safeFixCategory !== "mod_conflict") {
+  setFixPreviewError(
+    "Safe Fix is only available for mod conflict results right now. This diagnosis needs manual steps instead."
+  );
+  return;
+}
 
   try {
     setApplyingSafeFix(true);
@@ -4243,7 +4761,7 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
       eventDetail,
     });
 
-    await fetchJSON<{ ok: boolean }>(`${API_BASE_URL}/api/support-snapshot`, {
+    await fetchJSON<{ ok: boolean }>("/api/support-snapshot", {
       method: "POST",
       body: JSON.stringify(snapshot),
     });
@@ -4324,7 +4842,7 @@ if (!betaOpen) {
     : null,
 };
 
-      const data = await fetchJSON<AnalyzeResponse>(`${API_BASE_URL}/api/analyze`, {
+    const data = await fetchJSON<AnalyzeResponse>("/api/analyze", {
   method: "POST",
   body: JSON.stringify(payload),
 });
@@ -4373,7 +4891,7 @@ pushSupportEvent("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
 await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
 }
 
-      const lim = await fetchJSON<LimitResponse>(`${API_BASE_URL}/api/limit`, { method: "GET" });
+      const lim = await fetchJSON<LimitResponse>("/api/limit", { method: "GET" });
       setIsPro(Boolean(lim.isPro));
       setLimit(Number.isFinite(lim.limit) ? lim.limit : 3);
       setRemaining(Number.isFinite(lim.remaining) ? lim.remaining : 0);
@@ -4740,8 +5258,36 @@ async function openGameSettingsQuickAction() {
 );
   }
 }
+if (checkingBetaStatus) {
   return (
-    <main className="mx-auto w-full max-w-[900px] px-4 py-12 text-white">
+    <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
+      <div className="text-sm text-white/50">Checking beta access...</div>
+    </main>
+  );
+}
+if (checkingBetaStatus) {
+  return (
+    <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
+      <div className="text-sm text-white/50">Checking beta access...</div>
+    </main>
+  );
+}
+
+if (!betaOpen) {
+  return (
+    <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
+      <div className="max-w-lg rounded-3xl border border-red-500/20 bg-black p-8 text-center shadow-2xl">
+        <h1 className="text-3xl font-extrabold">FixMyGame Beta Closed</h1>
+        <p className="mt-4 text-white/70">
+          {betaMessage || "This beta build is currently unavailable."}
+        </p>
+      </div>
+    </main>
+  );
+}
+
+return (
+  <main className="mx-auto w-full max-w-[900px] px-4 py-12 text-white">
   <div className="flex items-start justify-between gap-4">
     <div className="min-w-0">
       <h1 className="text-4xl font-extrabold tracking-tight">
@@ -5067,30 +5613,37 @@ onClick={() => {
               className="min-h-[220px] w-full resize-y rounded-xl border border-white/10 bg-black/30 px-4 py-3 font-mono text-sm outline-none focus:border-white/20"
               value={crashLog}
               onChange={(e) => {
-              const value = e.target.value;
-              setCrashLog(value);
-              if (!crashLog.trim() && value.trim()) {
-                setHasAppliedAutoGameDetect(false);
-              }
-              setCurrentLogPath("");
-              setAutoDetectStatus("idle");
+  const value = e.target.value;
 
-const detectedGame = detectGameFromLog(value);
-const activeGameKey = detectedGame || selectedGameKey;
+  setCrashLog(value);
+  setCurrentLogPath("");
+  setAutoDetectStatus("idle");
 
-applyDetectedGameOnce(detectedGame);
+  const detectedGame = detectGameFromLog(value);
+  const shouldAutoSwitchGame =
+    detectedGame &&
+    detectedGame !== selectedGameKey &&
+    !hasAppliedAutoGameDetect;
 
-if (value.trim().length > 40) {
-  setQuickSignals(quickDetect(value, activeGameKey));
-  setLogHighlights(extractLogHighlights(value, activeGameKey));
-  setLiveMods(extractModsFromLog(value, activeGameKey));
-  setMostSuspiciousLine(getMostSuspiciousLine(value, activeGameKey));
-} else {
-  setQuickSignals({});
-  setLogHighlights([]);
-  setLiveMods([]);
-  setMostSuspiciousLine(null);
-}
+  const activeGameKey = shouldAutoSwitchGame
+    ? detectedGame
+    : selectedGameKey;
+
+  if (shouldAutoSwitchGame) {
+    setSelectedGameKey(detectedGame);
+  }
+
+  if (value.trim().length > 40) {
+    setQuickSignals(quickDetect(value, activeGameKey));
+    setLogHighlights(extractLogHighlights(value, activeGameKey));
+    setLiveMods(extractModsFromLog(value, activeGameKey));
+    setMostSuspiciousLine(getMostSuspiciousLine(value, activeGameKey));
+  } else {
+    setQuickSignals({});
+    setLogHighlights([]);
+    setLiveMods([]);
+    setMostSuspiciousLine(null);
+  }
 }}
               placeholder={
   selectedGameKey === "minecraft"
@@ -5299,7 +5852,11 @@ if (value.trim().length > 40) {
 </div>
   </div>
 ) : null}
-
+{errorMsg ? (
+  <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
+    {errorMsg}
+  </div>
+) : null}
 {/* 🔥 FIX ASSISTANT */}
 <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
@@ -5317,13 +5874,17 @@ if (value.trim().length > 40) {
   </button>
 
     <button
-    type="button"
-    onClick={openStepByStepGuide}
-    disabled={!hasDiagnosticResult}
-    className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
-  >
-    🧭 View Step-by-Step Guide
-  </button>
+  type="button"
+  onClick={() => {
+    setCurrentGuideStep(0);
+    setCompletedGuideSteps([]);
+    openStepByStepGuide();
+  }}
+  disabled={!hasDiagnosticResult}
+  className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+>
+  🧭 View Step-by-Step Guide
+</button>
 
   <div className="rounded-xl bg-black/20 px-4 py-3 text-left text-white">
   <button
@@ -5480,12 +6041,6 @@ if (value.trim().length > 40) {
         );
       })}
     </div>
-  </div>
-) : null}
-
-{errorMsg ? (
-  <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-sm text-red-100">
-    {errorMsg}
   </div>
 ) : null}
         </div>
@@ -5705,7 +6260,7 @@ setTimeout(() => {
 
         <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-    TAKE ACTION
+    FIX ASSISTANT
   </div>
 
   <div className="mt-3 flex flex-wrap gap-2">
@@ -5719,13 +6274,17 @@ setTimeout(() => {
     </button>
 
     <button
-      type="button"
-      onClick={openStepByStepGuide}
-      disabled={!hasDiagnosticResult}
-      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white/85 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      🧭 View Step-by-Step Guide
-    </button>
+  type="button"
+  onClick={() => {
+    setCurrentGuideStep(0);
+    setCompletedGuideSteps([]);
+    openStepByStepGuide();
+  }}
+  disabled={!hasDiagnosticResult}
+  className="rounded-xl bg-black/20 px-4 py-3 text-left text-white transition hover:bg-black/30 disabled:cursor-not-allowed disabled:opacity-60"
+>
+  🧭 View Step-by-Step Guide
+</button>
 
     <button
       type="button"
@@ -5744,7 +6303,117 @@ setTimeout(() => {
     </button>
   </div>
 </div>
+{shouldShowMissingModRecovery ? (
+  <section className="mt-3 rounded-3xl border border-white/10 bg-[#071224] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/80">
+      Missing Mod Recovery
+    </div>
 
+    <h3 className="mt-3 text-2xl font-bold text-white">
+      Recover or reinstall {missingModRecoveryTarget}
+    </h3>
+
+    <p className="mt-2 text-sm text-white/70">
+      FixMyGame can look for this mod on your device. If it finds the mod in the wrong place,
+      it can move it back into your game’s Mods folder. If it is not found locally, you can open
+      the download page directly.
+    </p>
+
+    <div className="mt-5 flex flex-wrap gap-3">
+      <button
+        type="button"
+        onClick={searchForMissingModOnDevice}
+        disabled={searchingMissingMod}
+        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {searchingMissingMod ? "Searching This PC..." : "Search This PC"}
+      </button>
+
+      <button
+        type="button"
+        onClick={moveFoundModIntoModsFolder}
+        disabled={!missingModRecovery?.found || movingMissingMod}
+        className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-emerald-200 transition hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {movingMissingMod ? "Moving Mod..." : "Move to Mods Folder"}
+      </button>
+
+      <button
+        type="button"
+        onClick={openMissingModDownloadPage}
+        disabled={!missingModDownloadUrl}
+        className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Download Missing Mod
+      </button>
+    </div>
+
+    <div className="mt-5 grid gap-3">
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">
+          Missing Mod
+        </div>
+        <div className="mt-2 text-white">{primaryMissingModName}</div>
+      </div>
+
+      {missingModRecovery ? (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">
+            Search Result
+          </div>
+
+                    {missingModRecovery.found ? (
+            <div className="mt-3 space-y-3 text-sm text-white/80">
+              <div>
+                <div className="text-white/50">Found at</div>
+                <div className="break-all text-white">{missingModRecovery.foundPath}</div>
+              </div>
+
+              <div>
+                <div className="text-white/50">Needed in</div>
+                <div className="break-all text-white">{missingModRecovery.expectedPath}</div>
+              </div>
+
+{missingModRecovery.justMovedToCorrectPlace ? (
+  <div className="text-emerald-300">
+    This mod was successfully moved back into the correct Mods folder.
+  </div>
+) : missingModRecovery.alreadyInCorrectPlace ? (
+  <div className="text-emerald-300">
+    This mod is already in the correct Mods folder. This log may be old, or the mod was restored after the log was created. Launch the game again and run a fresh diagnostic if the issue continues.
+  </div>
+) : missingModRecovery.foundCandidateKind === "archive_file" ? (
+  <div className="text-amber-300">
+    A downloaded archive for this mod was found. It still needs to be extracted or installed into the Mods folder.
+  </div>
+) : (
+  <div className="text-cyan-200">
+    This mod was found outside the Mods folder and can be moved back automatically.
+  </div>
+)}
+            </div>
+          ) : (
+            <div className="mt-3 text-sm text-white/75">
+              This mod was not found in the common local locations FixMyGame searched.
+              Use the download button to reinstall it.
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {missingModDownloadUrl ? (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">
+            Download Source
+          </div>
+          <div className="mt-2 break-all text-sm text-cyan-200">
+            {missingModDownloadUrl}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  </section>
+) : null}
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
             <div className="text-xs font-semibold tracking-widest text-white/60">
@@ -6009,7 +6678,7 @@ setTimeout(() => {
     onClick={() => setShowSettingsModal(false)}
   >
     <div
-      className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-start justify-between gap-4">
@@ -6022,6 +6691,9 @@ setTimeout(() => {
           </h2>
           <p className="mt-2 text-sm text-white/70">
             Control privacy, diagnostics, and local app preferences.
+            <div className="mt-2 text-sm text-white/50">
+              Changes are saved automatically on this device.
+            </div>
           </p>
         </div>
 
@@ -6062,58 +6734,173 @@ setTimeout(() => {
         </button>
       </div>
 
-      {settingsTab === "privacy" ? (
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
+     {settingsTab === "privacy" ? (
+  <div className="mt-5 grid gap-4">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        PRIVACY & DIAGNOSTICS
+      </div>
+
+      <div className="mt-4">
+        <div className="font-medium text-white">
+          Help improve FixMyGame by sharing anonymous diagnostic data
+        </div>
+
+        <p className="mt-2 text-sm text-white/60">
+          Includes crash patterns, detected issues, and fix results. No unrelated personal files are collected.
+        </p>
+
+        <p className="mt-2 text-xs text-white/45">
+          Current status: {supportTelemetryEnabled ? "On" : "Off"}
+        </p>
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-            PRIVACY & DIAGNOSTICS
+            YOUR DATA
           </div>
 
-          <div className="mt-4 flex items-start justify-between gap-4">
-            <div>
-              <div className="font-medium text-white">
-                Help improve FixMyGame by sharing anonymous diagnostic data
-              </div>
-              <p className="mt-2 text-sm text-white/60">
-                Includes crash patterns, detected issues, and fix results. No unrelated personal files are collected.
-              </p>
-              <p className="mt-2 text-xs text-white/45">
-                Current status: {supportTelemetryEnabled ? "On" : "Off"}
-              </p>
-            </div>
+          <div className="mt-3 text-sm text-white/70">
+            We never collect:
+          </div>
 
-            <label className="relative inline-flex h-7 w-14 shrink-0 cursor-pointer items-center">
-  <input
-    type="checkbox"
-    checked={supportTelemetryEnabled}
-    onChange={toggleSupportTelemetry}
-    className="peer sr-only"
-    aria-label="Share anonymous diagnostic data"
+          <ul className="mt-2 list-disc pl-5 text-sm text-white/60 space-y-1">
+            <li>Personal files or documents</li>
+            <li>Passwords or account information</li>
+            <li>Full folder contents</li>
+            <li>Payment or financial data</li>
+            <li>Anything unrelated to crash diagnostics</li>
+          </ul>
+        </div>
+
+        <div className="mt-5 flex justify-end">
+          <label className="relative inline-flex h-7 w-14 shrink-0 cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={supportTelemetryEnabled}
+              onChange={toggleSupportTelemetry}
+              className="peer sr-only"
+              aria-label="Share anonymous diagnostic data"
+            />
+            <span className="absolute inset-0 rounded-full bg-white/15 transition peer-checked:bg-cyan-400" />
+            <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition peer-checked:left-8" />
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div className="rounded-2xl border border-red-500/20 bg-red-950/20 p-4">
+      <div className="font-medium text-white">Reset privacy consent</div>
+
+      <p className="mt-2 text-sm text-white/60">
+        This will clear your accepted authorization and reopen the privacy consent screen next time.
+      </p>
+
+      <button
+        type="button"
+        onClick={() => {
+          const confirmed = window.confirm(
+            "Reset privacy consent? You will see the authorization screen again next time."
+          );
+
+          if (!confirmed) return;
+
+          window.localStorage.removeItem(APP_AUTH_STORAGE_KEY);
+          window.localStorage.removeItem(SUPPORT_TELEMETRY_STORAGE_KEY);
+
+          setHasAcceptedAuthorization(false);
+          setSupportTelemetryEnabled(false);
+          setShowSettingsModal(false);
+        }}
+        className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/20"
+      >
+        Reset Consent
+      </button>
+    </div>
+  </div>
+) : (
+        <div className="mt-5 grid gap-4">
+  <SettingsPanel title="FIX ASSISTANT">
+  <div className="rounded-xl border border-emerald-300/15 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-50/85">
+    FixMyGame automatically creates a backup before applying safe fixes.
+  </div>
+
+  <SettingToggleRow
+    label="Enable Smart Fix"
+    description="Suggest safe, guided fixes for detected issues."
+    checked={appSettings.enableSafeFix}
+    onChange={(checked) =>
+      setAppSettings((prev) => ({ ...prev, enableSafeFix: checked }))
+    }
   />
-  <span className="absolute inset-0 rounded-full bg-white/15 transition peer-checked:bg-cyan-400" />
-  <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition peer-checked:left-8" />
-</label>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-            APP PREFERENCES
-          </div>
 
-          <div className="mt-4 grid gap-3">
-            <button
-              type="button"
-              onClick={resetSavedSystemPrefs}
-              className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-white/85 transition hover:bg-white/10 hover:text-white"
-            >
-              Reset saved system fields
-            </button>
+  <SettingToggleRow
+    label="Confirm Before Applying Fix"
+    description="Always review changes before any fix is applied."
+    checked={appSettings.askBeforeFixing}
+    onChange={(checked) =>
+      setAppSettings((prev) => ({ ...prev, askBeforeFixing: checked }))
+    }
+  />
+</SettingsPanel>
 
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/60">
-              This resets saved game, GPU, driver version, and graphics API preferences on this device.
-            </div>
-          </div>
-        </div>
+  <SettingsPanel title="DIAGNOSTIC DISPLAY">
+    <SettingToggleRow
+      label="Show Advanced Details"
+      description="Show detected signals, loader, version, and technical tags."
+      checked={appSettings.showAdvancedDetails}
+      onChange={(checked) =>
+        setAppSettings((prev) => ({ ...prev, showAdvancedDetails: checked }))
+      }
+    />
+
+    <SettingToggleRow
+      label="Highlight Suspicious Line"
+      description="Show the log line FixMyGame thinks matters most."
+      checked={appSettings.highlightSuspiciousLine}
+      onChange={(checked) =>
+        setAppSettings((prev) => ({
+          ...prev,
+          highlightSuspiciousLine: checked,
+        }))
+      }
+    />
+
+    <SettingToggleRow
+      label="Show Probability Breakdown"
+      description="Show why FixMyGame picked the likely cause."
+      checked={appSettings.showProbabilityBreakdown}
+      onChange={(checked) =>
+        setAppSettings((prev) => ({
+          ...prev,
+          showProbabilityBreakdown: checked,
+        }))
+      }
+    />
+  </SettingsPanel>
+
+  <SettingsPanel title="HISTORY & LOCAL DATA">
+    <SettingToggleRow
+      label="Save Fix History"
+      description="Save diagnostics and copied fixes on this device."
+      checked={appSettings.saveFixHistory}
+      onChange={(checked) =>
+        setAppSettings((prev) => ({ ...prev, saveFixHistory: checked }))
+      }
+    />
+
+    <button
+      type="button"
+      onClick={resetSavedSystemPrefs}
+      className="rounded-xl border border-red-300/20 bg-red-400/10 px-4 py-3 text-left font-semibold text-red-100 transition hover:bg-red-400/20"
+    >
+      Reset Device Data
+    </button>
+
+    <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/60">
+      This resets saved game, GPU, driver version, and graphics API preferences on this device.
+    </div>
+  </SettingsPanel>
+</div>
       )}
 
       <div className="mt-6 flex justify-end">
@@ -6135,68 +6922,150 @@ setTimeout(() => {
     onClick={() => setShowFixGuide(false)}
   >
     <div
-      className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#071224] shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-        STEP-BY-STEP FIX GUIDE
+      <div className="border-b border-white/10 p-6">
+        <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+          INTERACTIVE FIX GUIDE
+        </div>
+
+        <h2 className="mt-2 text-2xl font-bold text-white">
+          {gameTitle} Fix Walkthrough
+        </h2>
+
+        <p className="mt-3 text-white/70">
+          Complete one step at a time. Test the game after each major change.
+        </p>
       </div>
 
-      <h2 className="mt-2 text-2xl font-bold text-white">
-        {gameTitle} Troubleshooting Guide
-      </h2>
-
-      <p className="mt-3 text-white/75">
-        Follow these steps in order. Test the game after each change so you know exactly what fixed it.
-      </p>
-
-      <div className="mt-5 rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-        <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
-          START HERE
-        </div>
-        <div className="mt-2 text-lg font-semibold text-white">
-          {displayAnalysis.quickFixFirst}
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3">
-        {displayAnalysis.recommendedFixSteps.map((step, index) => (
-          <div
-            key={`${index}-${step}`}
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-white/90"
-          >
-            <div className="text-xs font-semibold tracking-widest text-white/50">
-              STEP {index + 1}
-            </div>
-            <div className="mt-2">{step}</div>
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+          <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
+            START HERE
           </div>
-        ))}
-      </div>
-
-      <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
-        <div className="text-xs font-semibold tracking-widest text-white/60">
-          MOST LIKELY CAUSE
+          <div className="mt-2 text-lg font-semibold text-white">
+            {displayAnalysis.quickFixFirst}
+          </div>
         </div>
-        <div className="mt-2 text-white">{displayAnalysis.mostLikelyCause}</div>
+
+        <div className="mt-5 grid gap-3">
+          {displayAnalysis.recommendedFixSteps.map((step, index) => {
+            const isCurrent = index === currentGuideStep;
+            const isDone = completedGuideSteps.includes(index);
+
+            return (
+              <button
+                key={`${index}-${step}`}
+                type="button"
+                onClick={() => setCurrentGuideStep(index)}
+                className={[
+                  "rounded-xl border px-4 py-4 text-left transition",
+                  isCurrent
+                    ? "border-cyan-300/40 bg-cyan-400/10"
+                    : isDone
+                    ? "border-emerald-300/30 bg-emerald-400/10"
+                    : "border-white/10 bg-white/5 hover:bg-white/10",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs font-semibold tracking-widest text-white/50">
+                    STEP {index + 1}
+                  </div>
+
+                  <div className="text-sm">
+                    {isDone ? "✅ Done" : isCurrent ? "➡️ Current" : "○"}
+                  </div>
+                </div>
+
+                <div className="mt-2 text-white/90">{step}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+          <div className="text-xs font-semibold tracking-widest text-white/60">
+            MOST LIKELY CAUSE
+          </div>
+          <div className="mt-2 text-white">
+            {displayAnalysis.mostLikelyCause}
+          </div>
+        </div>
       </div>
 
-      <div className="mt-5 flex justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => setShowFixGuide(false)}
-          className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white"
-        >
-          Close
-        </button>
+      <div className="border-t border-white/10 p-4">
+  <div className="mb-3 text-sm text-white/60">
+    Step {Math.min(currentGuideStep + 1, displayAnalysis.recommendedFixSteps.length)} of{" "}
+    {displayAnalysis.recommendedFixSteps.length}
+  </div>
 
-        <button
-          type="button"
-          onClick={applyQuickFix}
-          className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400"
-        >
-          Copy Fix Steps
-        </button>
-      </div>
+  <div className="flex flex-wrap justify-between gap-3">
+    <div className="flex flex-wrap gap-3">
+      <button
+        type="button"
+        onClick={() => setShowFixGuide(false)}
+        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white"
+      >
+        Close
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setCurrentGuideStep((prev) => Math.max(prev - 1, 0));
+        }}
+        disabled={currentGuideStep === 0}
+        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        ← Back
+      </button>
+    </div>
+
+    <div className="flex flex-wrap gap-3">
+      <button
+        type="button"
+        onClick={applyQuickFix}
+        className="rounded-xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-100 transition hover:bg-cyan-400/20"
+      >
+        Copy Steps
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setCompletedGuideSteps((prev) => {
+            if (prev.includes(currentGuideStep)) {
+              return prev.filter((stepIndex) => stepIndex !== currentGuideStep);
+            }
+
+            return [...prev, currentGuideStep];
+          });
+        }}
+        className="rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-4 py-2 font-semibold text-emerald-100 transition hover:bg-emerald-400/20"
+      >
+        Undo / Mark Done
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setCompletedGuideSteps((prev) => {
+            if (prev.includes(currentGuideStep)) return prev;
+            return [...prev, currentGuideStep];
+          });
+
+          setCurrentGuideStep((prev) =>
+            Math.min(prev + 1, displayAnalysis.recommendedFixSteps.length - 1)
+          );
+        }}
+        className="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 transition hover:bg-cyan-300"
+      >
+        Done & Next →
+      </button>
+    </div>
+  </div>
+</div>
     </div>
   </div>
 ) : null}
@@ -6226,52 +7095,74 @@ setTimeout(() => {
 </div>
 
 <div className="custom-scroll min-h-0 flex-1 overflow-y-auto px-6 py-5">
-  <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-    <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
-      WHAT FIXMYGAME CAN DO RIGHT NOW
-    </div>
-    <div className="mt-2 text-white/90">
-      This version can perform one supported Safe Fix: backing up and quarantining a likely broken mod or folder. Bigger automatic repairs like editing configs, moving multiple mods, or changing launcher settings are planned for a future update.
-    </div>
-  </div>
-
-<div className="mt-4 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
-  <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
-    WHAT APPLY SAFE FIX DOES
-  </div>
-  <div className="mt-2 text-white/90">
-    FixMyGame will back up the most likely broken mod or invalid folder, then move it out of your active Mods folder so the game can launch without it.
-  </div>
-</div>
-
-<div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4">
-  <div className="text-xs font-semibold tracking-widest text-white/60">
-    SAFE FIX WILL DO THIS
-  </div>
-
-  <div className="mt-3 grid gap-2">
-    {buildSafeFixPlanPreview({
-      suspectMods: safeFixSuspects,
-      selectedGameKey,
-    }).map((item) => (
-      <div
-        key={item.id}
-        className="rounded-xl border border-white/10 bg-black/20 px-3 py-3"
-      >
-        <div className="font-medium text-white">{item.title}</div>
-        <div className="mt-2 text-sm text-white/70">{item.detail}</div>
+  {activeSafeFixCategory === "missing_dependency" ? (
+    <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        NEXT STEP
       </div>
-    ))}
-  </div>
-</div>
-
-{!gameInstallPath ? (
-    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
-      Safe Fix is unavailable right now because FixMyGame does not detect a local {gameTitle} install on this device. Pasted logs can still be diagnosed, but Safe Fix needs a real local game folder.
+      <div className="mt-2 text-lg font-semibold text-white">
+        Download the missing mod.
+      </div>
+      <div className="mt-2 text-sm text-white/70">
+        FixMyGame will open the download page. Nothing will be moved or quarantined.
+      </div>
     </div>
-  ) : safeFixSuspects.length === 0 ? (
+  ) : activeSafeFixCategory === "mod_conflict" ? (
+    <>
+      <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+        <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
+          SAFE FIX
+        </div>
+        <div className="mt-2 text-lg font-semibold text-white">
+          Back up and quarantine the likely problem mod.
+        </div>
+        <div className="mt-2 text-sm text-white/70">
+          FixMyGame will move the matched mod out of your active Mods folder so the game can test without it.
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+        <div className="text-xs font-semibold tracking-widest text-white/60">
+          BEFORE YOU CONTINUE
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          {buildSafeFixPlanPreview({
+            suspectMods: safeFixSuspects,
+            selectedGameKey,
+          }).map((item) => (
+            <div
+              key={item.id}
+              className="rounded-xl border border-white/10 bg-black/20 px-3 py-3"
+            >
+              <div className="font-medium text-white">{item.title}</div>
+              <div className="mt-1 text-sm text-white/65">{item.detail}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  ) : (
+    <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
+        MANUAL FIX
+      </div>
+      <div className="mt-2 text-lg font-semibold text-white">
+        Follow the recommended steps.
+      </div>
+      <div className="mt-2 text-sm text-white/70">
+        Automatic repair is not available for this result.
+      </div>
+    </div>
+  )}
+
+  {!gameInstallPath && activeSafeFixCategory === "mod_conflict" ? (
     <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
-      Safe Fix is unavailable right now because no suspected mods were detected from this crash.
+      Safe Fix needs a detected local {gameTitle} install.
+    </div>
+  ) : activeSafeFixCategory === "mod_conflict" && safeFixSuspects.length === 0 ? (
+    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
+      No suspected mod was detected for Safe Fix.
     </div>
   ) : null}
 
@@ -6303,16 +7194,41 @@ setTimeout(() => {
       Copy Fix Steps
     </button>
 
-    <button
+<button
   type="button"
-  onClick={applySafeFixNow}
-  disabled={applyingSafeFix || !canApplySafeFix}
+  onClick={() => {
+    if (activeSafeFixCategory === "missing_dependency") {
+      if (missingModAlreadyInstalled) {
+        openModsFolder(false, "quickActions");
+        return;
+      }
+
+      openMissingModDownloadPage();
+      return;
+    }
+
+    applySafeFixNow();
+  }}
+  disabled={
+    applyingSafeFix ||
+    (activeSafeFixCategory === "missing_dependency"
+      ? !missingModAlreadyInstalled && !missingModDownloadUrl
+      : !canApplySafeFix)
+  }
   className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-5 py-3 font-medium text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
 >
-  {applyingSafeFix
+  {activeSafeFixCategory === "missing_dependency"
+    ? missingModAlreadyInstalled
+      ? "Open Mods Folder"
+      : missingModDownloadUrl
+      ? "Download Missing Mod"
+      : "Download Link Not Found"
+    : applyingSafeFix
     ? "Applying Safe Fix..."
     : !gameInstallPath
     ? "Apply Safe Fix (Needs Local Game Install)"
+    : activeSafeFixCategory !== "mod_conflict"
+    ? "Apply Safe Fix (Not Available for This Result)"
     : safeFixSuspects.length === 0
     ? "Apply Safe Fix (No Suspected Mods)"
     : "Apply Safe Fix"}
@@ -6654,11 +7570,14 @@ setTimeout(() => {
 
   <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 transition hover:bg-black/30">
     <input
-      type="checkbox"
-      checked={supportTelemetryEnabled}
-      onChange={(e) => setSupportTelemetryEnabled(e.target.checked)}
-      className="mt-1 h-4 w-4 accent-cyan-400"
-    />
+  type="checkbox"
+  checked={supportTelemetryEnabled}
+  onChange={(e) => {
+    setSupportTelemetryEnabled(e.target.checked);
+    if (e.target.checked) setShowError(false);
+  }}
+  className="mt-1 h-4 w-4 accent-cyan-400"
+/>
     <div>
       <div className="text-sm font-medium text-white">
         Help improve FixMyGame by sharing anonymous diagnostic data (recommended)
@@ -6668,6 +7587,11 @@ setTimeout(() => {
       </div>
     </div>
   </label>
+  {showError ? (
+  <div className="mt-3 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-100">
+    Please check the box before continuing.
+  </div>
+) : null}
 </div>
 
       <div className="mt-5 rounded-xl border border-white/10 bg-white/5 p-4">
@@ -6822,6 +7746,59 @@ function DarkSelect(props: {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SettingsPanel({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        {title}
+      </div>
+
+      <div className="mt-4 grid gap-3">{children}</div>
+    </div>
+  );
+}
+
+function SettingToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+      <div>
+        <div className="font-medium text-white/90">{label}</div>
+        <div className="mt-1 text-sm text-white/55">{description}</div>
+      </div>
+
+      <div className="mt-5 flex justify-end">
+  <label className="relative inline-flex h-7 w-14 shrink-0 cursor-pointer items-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="peer sr-only"
+          aria-label={label}
+        />
+        <span className="absolute inset-0 rounded-full bg-white/15 transition peer-checked:bg-cyan-400" />
+        <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition peer-checked:left-8" />
+      </label>
+    </div>
+  </div>
   );
 }
 

@@ -34,18 +34,23 @@ const DAILY_LIMIT = 3;
 type DetectedSignals = {
   errorType?: string;
   loader?: string;
+  launcher?: string;
   gameVersion?: string;
   javaVersion?: string;
   suspectedMods: string[];
-    likelyCategory?:
+  likelyCategory?:
     | "mod_conflict"
     | "missing_dependency"
+    | "dependency_not_initialized"
     | "loader_mismatch"
     | "mixin_failure"
     | "gpu_driver_issue"
     | "out_of_memory"
     | "shader_crash"
     | "java_mismatch"
+    | "runtime_disconnect"
+    | "network_mod_failure"
+    | "game_files_corrupt"
     | "no_clear_issue_found"
     | "no_new_log"
     | "advisory_skipped_mod"
@@ -54,6 +59,20 @@ type DetectedSignals = {
     | "advisory_workshop_warning"
     | "advisory_partial_load"
     | "unknown";
+  dependencyState?:
+    | "missing_not_installed"
+    | "installed_but_not_loaded"
+    | "installed_but_wrong_version"
+    | "installed_but_corrupted"
+    | "unknown_dependency_state";
+  missingComponentRaw?: string;
+  missingComponentDisplay?: string;
+  recommendedAction?:
+    | "install"
+    | "relaunch"
+    | "update_or_match_version"
+    | "reinstall"
+    | "inspect";
 };
 
 type AnalyzeModelResponse = {
@@ -118,33 +137,140 @@ async function incrementAndGetCount(req: NextRequest) {
 }
 
 function getRelevantLogWindow(crashLog: string, gameKey = "") {
-  const lines = crashLog.split("\n");
+  const sessions = splitLogIntoSessions(crashLog, gameKey);
 
-  if (gameKey === "stardew_valley") {
-    // If the file contains multiple SMAPI sessions, prefer the latest one.
-    const sessionStartIndexes: number[] = [];
-
-    lines.forEach((line, index) => {
-      const lower = line.toLowerCase();
-      if (
-        lower.includes("smapi 4.") ||
-        lower.includes("log started at")
-      ) {
-        sessionStartIndexes.push(index);
-      }
-    });
-
-    if (sessionStartIndexes.length > 1) {
-      const lastStart = sessionStartIndexes[sessionStartIndexes.length - 1];
-      return lines.slice(lastStart).join("\n");
-    }
-
-    // Otherwise just bias toward the tail of the current session.
-    return lines.slice(-120).join("\n");
+  if (!sessions.length) {
+    return String(crashLog || "").split("\n").slice(-160).join("\n");
   }
 
-  // Generic fallback: prefer the most recent portion of the log.
-  return lines.slice(-160).join("\n");
+  const scored = sessions.map((session, index) => ({
+    ...session,
+    sessionIndex: index,
+    score: scoreLogSession(session.text, gameKey),
+  }));
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.sessionIndex - a.sessionIndex;
+  });
+
+  const best = scored[0];
+
+  if (!best?.text) {
+    return String(crashLog || "").split("\n").slice(-160).join("\n");
+  }
+
+  return best.text;
+}
+
+function splitLogIntoSessions(crashLog: string, gameKey = "") {
+  const lines = String(crashLog || "").split("\n");
+  if (!lines.length) return [];
+
+  const sessionStarts: number[] = [0];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+
+    const isTimestampedRestart =
+      /^\[\d{1,2}:\d{2}:\d{2}\]/.test(lines[i]) &&
+      (
+        line.includes("loading minecraft") ||
+        line.includes("starting jei") ||
+        line.includes("smapi") ||
+        line.includes("log started at") ||
+        line.includes("game version") ||
+        line.includes("initializing")
+      );
+
+    const isExplicitSessionStart =
+      line.includes("smapi 4.") ||
+      line.includes("log started at") ||
+      line.includes("loading minecraft") ||
+      line.includes("launcher bootstrap") ||
+      line.includes("main/info") && line.includes("loading") ||
+      line.includes("starting game") ||
+      line.includes("game started");
+
+    if ((isTimestampedRestart || isExplicitSessionStart) && i > 0) {
+      sessionStarts.push(i);
+    }
+  }
+
+  const dedupedStarts = Array.from(new Set(sessionStarts)).sort((a, b) => a - b);
+
+  const sessions = dedupedStarts.map((start, index) => {
+    const end =
+      index < dedupedStarts.length - 1
+        ? dedupedStarts[index + 1]
+        : lines.length;
+
+    const sessionLines = lines.slice(start, end);
+    const text = sessionLines.join("\n").trim();
+
+    return {
+      start,
+      end,
+      text,
+      lineCount: sessionLines.length,
+    };
+  });
+
+  return sessions.filter((s) => s.text.length > 0);
+}
+
+function scoreLogSession(sessionText: string, gameKey = "") {
+  const lower = String(sessionText || "").toLowerCase();
+  let score = 0;
+
+  // Strong crash / failure signals
+  if (lower.includes("classnotfoundexception")) score += 120;
+  if (lower.includes("noclassdeffounderror")) score += 120;
+  if (lower.includes("missing dependency")) score += 110;
+  if (lower.includes("missing mods")) score += 110;
+  if (lower.includes("mixin")) score += 100;
+  if (lower.includes("failed to load")) score += 100;
+  if (lower.includes("could not load")) score += 90;
+  if (lower.includes("exception")) score += 80;
+  if (lower.includes("error")) score += 70;
+  if (lower.includes("crash")) score += 80;
+  if (lower.includes("fatal")) score += 90;
+  if (lower.includes("traceback")) score += 90;
+  if (lower.includes("timed out")) score += 75;
+  if (lower.includes("readtimeoutexception")) score += 85;
+
+  // Advisory / warning-only signals
+  if (lower.includes("skipped mods")) score += 50;
+  if (lower.includes("empty folder")) score += 50;
+  if (lower.includes("warning")) score += 20;
+
+  // Healthy / normal signals reduce score
+  if (lower.includes("mods loaded and ready!")) score -= 60;
+  if (lower.includes("no clear issue")) score -= 30;
+  if (lower.includes("closedgame")) score -= 25;
+
+  // Game-specific weighting
+  if (gameKey === "minecraft") {
+    if (lower.includes("loading minecraft")) score += 10;
+    if (lower.includes("fabric")) score += 5;
+    if (lower.includes("forge")) score += 5;
+  }
+
+  if (gameKey === "stardew_valley") {
+    if (lower.includes("smapi")) score += 10;
+  }
+
+  if (gameKey === "project_zomboid") {
+    if (lower.includes("lua")) score += 10;
+    if (lower.includes("workshop")) score += 10;
+  }
+
+  return score;
+}
+
+function buildSessionFingerprint(text: string) {
+  return normalizeLogForComparison(text)
+    .slice(0, 4000);
 }
 
 function isHealthyLog(crashLog: string, gameKey = "") {
@@ -481,6 +607,108 @@ function detectForcedStardewEmptyFolderAdvisory(params: {
   };
 }
 
+function hasRuntimeSessionStart(text: string, gameKey = "") {
+  const lower = String(text || "").toLowerCase();
+
+  const genericPatterns = [
+    "client disconnected with reason:",
+    "connected to server",
+    "joined the game",
+    "joined world",
+    "loading 158 mods",
+    "loading mods:",
+    "starting jei",
+    "sending runtime unavailable",
+    "stopping jei",
+  ];
+
+  const minecraftPatterns = [
+    "essential connection manager",
+    "essential-sps",
+    "quic backend",
+    "loading minecraft",
+    "render thread/info",
+    "loaded 158 mods",
+  ];
+
+  const patterns =
+    gameKey === "minecraft"
+      ? [...genericPatterns, ...minecraftPatterns]
+      : genericPatterns;
+
+  return patterns.some((pattern) => lower.includes(pattern));
+}
+
+function hasLateDisconnect(text: string) {
+  const lower = String(text || "").toLowerCase();
+
+  return (
+    lower.includes("readtimeoutexception") ||
+    lower.includes("client disconnected with reason: timed out") ||
+    lower.includes("timed out")
+  );
+}
+
+function hasEssentialRuntimeSignals(text: string) {
+  const lower = String(text || "").toLowerCase();
+
+  return (
+    lower.includes("essential") ||
+    lower.includes("essential-sps") ||
+    lower.includes("cdn.essential.gg") ||
+    lower.includes("essential connection manager") ||
+    lower.includes("quic backend")
+  );
+}
+
+function detectLauncherFromLog(crashLog: string) {
+  const lower = String(crashLog || "").toLowerCase();
+
+  if (
+    lower.includes("curseforge") ||
+    lower.includes("overwolf") ||
+    lower.includes("\\curseforge\\") ||
+    lower.includes("/curseforge/")
+  ) {
+    return "CurseForge";
+  }
+
+  if (
+    lower.includes("prism launcher") ||
+    lower.includes("\\prismlauncher\\") ||
+    lower.includes("/prismlauncher/") ||
+    lower.includes("\\prism\\instances\\") ||
+    lower.includes("/prism/instances/")
+  ) {
+    return "Prism Launcher";
+  }
+
+  if (
+    lower.includes("multimc") ||
+    lower.includes("\\multimc\\") ||
+    lower.includes("/multimc/")
+  ) {
+    return "MultiMC";
+  }
+
+  if (
+    lower.includes("modrinth app") ||
+    lower.includes("\\modrinthapp\\") ||
+    lower.includes("/modrinthapp/")
+  ) {
+    return "Modrinth App";
+  }
+
+  if (
+    lower.includes(".minecraft") ||
+    lower.includes("minecraft launcher")
+  ) {
+    return "Minecraft Launcher";
+  }
+
+  return "";
+}
+
 function fallbackAnalyze(
   crashLog: string,
   gameKey = "",
@@ -498,6 +726,158 @@ function fallbackAnalyze(
   const normalizedGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
   
   const suspectedMods: string[] = [];
+
+  const isMissingBaseGameFile =
+  /Content[\\/][A-Za-z0-9_ .()[\]\-\\/]+?\.(xnb|xgs)/i.test(crashLog) ||
+  /ContentLoadException/i.test(crashLog) ||
+  /FileNotFoundException:\s*Content[\\/]/i.test(crashLog);
+  const runtimeSessionStarted = hasRuntimeSessionStart(crashLog, normalizedGameKey);
+  const lateDisconnectDetected = hasLateDisconnect(crashLog);
+  const essentialRuntimeSignals = hasEssentialRuntimeSignals(crashLog);
+  const launcher = detectLauncherFromLog(crashLog);
+
+    if (isMissingBaseGameFile) {
+  const missingAssetMatch =
+    crashLog.match(/FileNotFoundException:\s*(Content[\\/][^\\\n\r]+?\.(?:xnb|xgs))/i) ||
+    crashLog.match(/Could not find a part of the path\s+'[^']*?(Content[\\/][^']+?\.(?:xnb|xgs))'/i) ||
+    crashLog.match(/Failed loading asset\s+'([^']+)'/i);
+
+  const missingAsset =
+    missingAssetMatch?.[1]?.replace(/\//g, "\\") ||
+    "a required Stardew Valley content file";
+
+  return {
+    quickFixFirst: "Verify Stardew Valley’s game files through Steam.",
+
+    issue:
+      "Required base game files are missing or corrupted, preventing the game from loading.",
+
+    confidenceLevel: "High",
+
+    probabilityBreakdown: [
+      "90% - Missing or corrupted base game files",
+      "10% - A mod exposed the issue during load",
+    ],
+
+    mostLikelyCause:
+      `${missingAsset} is missing or corrupted in the game's Content folder.`,
+
+    recommendedFixSteps: [
+      "Close the game completely.",
+      "Open Steam.",
+      "Go to your Library.",
+      "Right-click Stardew Valley → Properties.",
+      "Go to Installed Files.",
+      "Click 'Verify integrity of game files'.",
+      "Wait for Steam to repair missing files.",
+      "Launch the game again.",
+    ],
+
+    needMoreInfo:
+      "If verifying files does not fix the issue, reinstall Stardew Valley or provide a new log after the next crash.",
+
+    detectedSignals: {
+      errorType: "ContentLoadException",
+      loader: "SMAPI",
+      gameVersion: "",
+      javaVersion: "",
+      suspectedMods: [],
+      likelyCategory: "game_files_corrupt",
+    },
+  };
+}
+
+  const skyrimRuntimeMismatchMatch = crashLog.match(
+    /plugin\s+([A-Za-z0-9_.-]+\.dll)[\s\S]*?reported as incompatible[\s\S]*?expected runtime\s+([0-9.]+),\s*got\s+([0-9.]+)/i
+  );
+
+  if (normalizedGameKey === "skyrimse" && skyrimRuntimeMismatchMatch) {
+    const pluginName = skyrimRuntimeMismatchMatch[1] || "the SKSE plugin";
+    const expectedRuntime = skyrimRuntimeMismatchMatch[2] || "the expected runtime";
+    const currentRuntime = skyrimRuntimeMismatchMatch[3] || "your current runtime";
+
+    return {
+      quickFixFirst: `Update ${pluginName} for Skyrim runtime ${currentRuntime}.`,
+      issue: `${pluginName} is built for Skyrim runtime ${expectedRuntime}, but your game is running runtime ${currentRuntime}.`,
+      confidenceLevel: "High",
+      probabilityBreakdown: [
+        `100% - ${pluginName} runtime version mismatch`,
+      ],
+      mostLikelyCause:
+        `${pluginName} does not match your current Skyrim/SKSE runtime version.`,
+      recommendedFixSteps: [
+        `Download the version of ${pluginName} made for Skyrim runtime ${currentRuntime}.`,
+        `Replace the old ${pluginName} file in your SKSE Plugins folder.`,
+        "Make sure SKSE, Address Library, and DLL plugins all match the same Skyrim runtime.",
+        "Relaunch Skyrim after updating the plugin.",
+      ],
+      needMoreInfo:
+        "If the crash continues, provide the updated SKSE log and the exact Skyrim runtime/SKSE versions.",
+      detectedSignals: {
+        errorType: "SkyrimRuntimeMismatch",
+        loader: "SKSE / Mod Manager",
+        gameVersion: currentRuntime,
+        javaVersion: "",
+        suspectedMods: [pluginName.replace(/\.dll$/i, ""), "skse"],
+        likelyCategory: "loader_mismatch",
+      },
+    };
+  }
+  
+  if (runtimeSessionStarted && lateDisconnectDetected) {
+    const runtimeQuickFix = essentialRuntimeSignals
+      ? "Temporarily disable Essential and test joining again."
+      : "Retest the session and compare the newest log from the moment the disconnect happens.";
+
+    const runtimeIssue = essentialRuntimeSignals
+      ? "The game launches and runs for a while, but the session later times out during an Essential connection."
+      : "The game launches and runs for a while, but the session later times out during gameplay.";
+
+    const runtimeCause = essentialRuntimeSignals
+      ? "This looks like a runtime connection/session timeout tied to Essential or its network session layer, not a startup crash."
+      : "This looks like a runtime connection/session timeout that happens after launch, not a startup crash.";
+
+    const runtimeSteps = essentialRuntimeSignals
+      ? [
+          "Temporarily disable Essential and test joining again.",
+          "If the timeout stops, keep Essential disabled or update/reconfigure it.",
+          "If the timeout still happens, compare the client and host modpacks again and load the newest log after reproducing it.",
+        ]
+      : [
+          "Retest and capture the newest log from the exact moment the disconnect happens.",
+          "Compare the client and host/server modpacks for mismatches.",
+          "Treat earlier startup warnings as secondary unless the game also fails before joining.",
+        ];
+
+    return {
+      quickFixFirst: runtimeQuickFix,
+      issue: runtimeIssue,
+      confidenceLevel: "High",
+      probabilityBreakdown: [
+        essentialRuntimeSignals
+          ? "85% - Runtime timeout tied to Essential/session networking"
+          : "75% - Runtime session timeout after launch",
+        "15% - Secondary mod compatibility warning",
+      ],
+      mostLikelyCause: runtimeCause,
+      recommendedFixSteps: runtimeSteps,
+      needMoreInfo:
+        "Because the game launched and only failed later, runtime timeout/session causes should be prioritized over startup warnings in this log.",
+      detectedSignals: {
+        errorType: "ReadTimeoutException",
+        loader:
+          normalizedGameKey === "minecraft"
+            ? (lower.includes("fabric") ? "Fabric" : lower.includes("forge") ? "Minecraft Forge" : "")
+            : "",
+        gameVersion: "",
+        javaVersion: "",
+        suspectedMods: essentialRuntimeSignals ? ["essential"] : [],
+        likelyCategory: essentialRuntimeSignals
+          ? "network_mod_failure"
+          : "runtime_disconnect",
+      },
+    };
+  }
 
     if (isHealthyLog(crashLog, normalizedGameKey)) {
   const currentMods = extractSuspectedMods(crashLog, normalizedGameKey);
@@ -750,6 +1130,8 @@ let recommendedFixSteps = [
   "Verify required dependencies are installed.",
   "Temporarily remove graphics or script/plugin-heavy mods if the issue persists.",
 ];
+let needMoreInfo =
+  "Provide the newest crash log and exact installed mod version if the issue continues.";
 
 if (normalizedGameKey === "stardew_valley") {
   if (
@@ -860,22 +1242,188 @@ if (normalizedGameKey === "fallout4") {
     "Review the first stack trace lines around the mixin/class error for related dependencies.",
   ];
 } else if (likelyCategory === "missing_dependency") {
-  const leadMod = suspectedMods[0] || "the affected mod";
-  quickFixFirst = `Install the missing dependency for ${leadMod}, or remove ${leadMod}.`;
-  issue = `A required dependency is missing for ${leadMod}.`;
-    mostLikelyCause = "One or more mods require another mod or library that is not installed or is the wrong version.";
+  const missingComponentRaw =
+    extractMissingComponentFromText(crashLog) ||
+    extractMissingComponentFromText(suspectedMods.join(" "));
+
+  const missingComponentDisplay =
+    normalizedGameKey === "minecraft"
+      ? inferMinecraftDisplayName(missingComponentRaw)
+      : missingComponentRaw || "required component";
+
+  const dependencyResolution = resolveDependencyState({
+    rawComponent: missingComponentRaw,
+    detectedMods: suspectedMods,
+    crashLog,
+    gameKey: normalizedGameKey,
+  });
+
+  const { dependencyState, recommendedAction } = dependencyResolution;
+
+    if (runtimeSessionStarted && lateDisconnectDetected) {
+    return {
+      quickFixFirst: essentialRuntimeSignals
+        ? "Temporarily disable Essential and test joining again."
+        : "Treat the timeout as the primary issue first, then come back to the dependency warning if it still matters.",
+      issue: essentialRuntimeSignals
+        ? "A dependency warning is present, but the game actually launches and later times out during an Essential session."
+        : "A dependency warning is present, but the game actually launches and later times out during gameplay.",
+      confidenceLevel: "High",
+      probabilityBreakdown: essentialRuntimeSignals
+        ? [
+            "85% - Runtime timeout tied to Essential/session networking",
+            "15% - Secondary dependency or compatibility warning",
+          ]
+        : [
+            "70% - Runtime disconnect/session timeout",
+            "30% - Secondary dependency or compatibility warning",
+          ],
+      mostLikelyCause: essentialRuntimeSignals
+        ? "The dependency warning appears secondary because the session starts successfully and only fails later during an Essential/network session."
+        : "The dependency warning appears secondary because the game/session starts successfully and only fails later.",
+      recommendedFixSteps: essentialRuntimeSignals
+        ? [
+            "Temporarily disable Essential and test joining again.",
+            "If the timeout stops, keep Essential disabled or update/reconfigure it.",
+            "Only fix the dependency warning next if it still appears after the timeout issue is resolved.",
+          ]
+        : [
+            "Prioritize fixing the timeout/disconnect issue first.",
+            "Then update or reinstall the dependency warning shown in the log if it still appears.",
+            "Retest with the newest log after reproducing the disconnect again.",
+          ],
+      needMoreInfo:
+        "Because the game launched before failing, this dependency issue should be treated as secondary unless the game also starts failing before launch.",
+      detectedSignals: {
+        errorType,
+        loader,
+        gameVersion,
+        javaVersion,
+        suspectedMods: essentialRuntimeSignals
+          ? Array.from(new Set(["essential", ...suspectedMods]))
+          : suspectedMods,
+        likelyCategory: essentialRuntimeSignals
+          ? "network_mod_failure"
+          : "runtime_disconnect",
+        dependencyState,
+        missingComponentRaw,
+        missingComponentDisplay,
+        recommendedAction,
+      },
+    };
+  }
+
+  if (recommendedAction === "install") {
+    quickFixFirst = `Install ${missingComponentDisplay} and relaunch the game.`;
+    issue = `${missingComponentDisplay} is required but does not appear to be installed.`;
+    mostLikelyCause = `Another mod is trying to use ${missingComponentDisplay}, but it is not currently installed or available to the game.`;
     probabilityBreakdown = [
-      "Missing dependency: 80%",
-      "Wrong dependency version: 15%",
-      "Wrong loader build: 5%",
+      `80% - ${missingComponentDisplay} is not installed`,
+      "15% - Wrong dependency version expected",
+      "5% - Loader/build mismatch",
     ];
     recommendedFixSteps = [
-      "Install the missing dependency listed in the crash log.",
-      "Check that dependency versions match your Minecraft version.",
-      "Make sure all mods are for the same loader.",
-      "Remove the dependent mod if you do not want to install its requirement.",
+      "Open your Mods folder.",
+      `Install ${missingComponentDisplay} for your exact game and loader version.`,
+      "Relaunch the game and test again.",
     ];
-  } else if (likelyCategory === "shader_crash") {
+    needMoreInfo =
+      "If the issue continues after installing it, run another diagnostic with the newest log.";
+  } else if (recommendedAction === "relaunch") {
+    likelyCategory = "dependency_not_initialized";
+    quickFixFirst =
+      "Close the game fully, then relaunch it once normally so dependencies can initialize.";
+    issue = `${missingComponentDisplay} appears to be installed, but it may not have fully initialized yet.`;
+    mostLikelyCause = `${missingComponentDisplay} or a related dependency looks present, but the loader may not have completed first-launch setup or initialization.`;
+    probabilityBreakdown = [
+      "70% - Installed dependency not initialized yet",
+      "20% - Launcher state or cache issue",
+      "10% - Actual missing or broken dependency",
+    ];
+    recommendedFixSteps = [
+      "Close the game completely.",
+      "Launch it once normally and let the mod loader finish setup.",
+      "Relaunch through your usual launcher after that if needed.",
+      "If the same issue returns, run FixMyGame again with the newest log.",
+    ];
+    needMoreInfo =
+      "If the issue continues after a normal relaunch, provide the newest crash log from that run.";
+  } else if (recommendedAction === "update_or_match_version") {
+    quickFixFirst = `Update or match the version of ${missingComponentDisplay} to your current game and loader version.`;
+    issue = `${missingComponentDisplay} appears to be installed, but the current version may not match the rest of the mod setup.`;
+    mostLikelyCause = `${missingComponentDisplay} is present, but the installed version is likely incompatible with the game, loader, or another mod.`;
+    probabilityBreakdown = [
+      `70% - Wrong version of ${missingComponentDisplay}`,
+      "20% - Secondary compatibility mismatch",
+      "10% - Incomplete install",
+    ];
+    recommendedFixSteps = [
+      `Check the installed version of ${missingComponentDisplay}.`,
+      "Install the version that matches your exact game and loader version.",
+      "Remove duplicate or older copies if more than one exists.",
+      "Relaunch and test again.",
+    ];
+    needMoreInfo =
+      "If this still fails, provide the exact installed version and newest crash log.";
+  } else if (recommendedAction === "reinstall") {
+    quickFixFirst = `Reinstall ${missingComponentDisplay} and relaunch the game.`;
+    issue = `${missingComponentDisplay} appears to be present, but the game cannot load one of its required classes.`;
+    mostLikelyCause = `${missingComponentDisplay} may be corrupted, incomplete, or the wrong build for this setup.`;
+    probabilityBreakdown = [
+      `70% - Corrupted or incomplete ${missingComponentDisplay} install`,
+      "20% - Wrong build/version",
+      "10% - Secondary mod conflict",
+    ];
+    recommendedFixSteps = [
+      `Remove the current copy of ${missingComponentDisplay}.`,
+      "Download a fresh copy for your exact game and loader version.",
+      "Place it back into the Mods folder.",
+      "Relaunch and test again.",
+    ];
+    needMoreInfo =
+      "If reinstalling does not help, provide the newest log and the exact file name/version.";
+  } else {
+    quickFixFirst = `Inspect ${missingComponentDisplay} and related dependencies first.`;
+    issue = `${missingComponentDisplay} appears tied to a dependency problem, but the exact state is not fully confirmed yet.`;
+    mostLikelyCause =
+      "A required dependency may be missing, mismatched, or partially broken.";
+    probabilityBreakdown = [
+      "50% - Missing dependency",
+      "30% - Wrong version",
+      "20% - Incomplete or corrupted install",
+    ];
+    recommendedFixSteps = [
+      `Check whether ${missingComponentDisplay} is present in the Mods folder.`,
+      "Confirm it matches your exact game and loader version.",
+      "Reinstall it if the current copy looks wrong or incomplete.",
+      "Run another diagnostic with the newest log if the issue continues.",
+    ];
+    needMoreInfo =
+      "Provide the newest crash log and exact installed mod version if the issue continues.";
+  }
+
+  return {
+    quickFixFirst,
+    issue,
+    confidenceLevel: "Medium",
+    probabilityBreakdown,
+    mostLikelyCause,
+    recommendedFixSteps,
+    needMoreInfo,
+    detectedSignals: {
+      errorType,
+      loader,
+      gameVersion,
+      javaVersion,
+      suspectedMods,
+      likelyCategory,
+      dependencyState,
+      missingComponentRaw,
+      missingComponentDisplay,
+      recommendedAction,
+    },
+  };
+} else if (likelyCategory === "shader_crash") {
     quickFixFirst = "Disable shaders first, then retest launch.";
     issue = "A shader or rendering-related crash occurred.";
     mostLikelyCause = "A shader pack, rendering mod, or graphics optimization mod is conflicting with the current setup.";
@@ -884,8 +1432,9 @@ if (normalizedGameKey === "fallout4") {
       "Graphics settings incompatibility: 20%",
       "Driver-related rendering issue: 15%",
     ];
-    recommendedFixSteps = [
+        recommendedFixSteps = [
       "Disable shaders and retest.",
+      "Lower shader quality or resolution before removing the shader pack.",
       "Temporarily remove OptiFine, Iris, Oculus, Sodium, or Rubidium one at a time.",
       "Lower graphics settings and test again.",
       "Update GPU drivers if the crash continues.",
@@ -947,13 +1496,14 @@ if (normalizedGameKey === "fallout4") {
     needMoreInfo:
       "Provide the full crash report, mod list, and loader version for a more precise diagnosis.",
     detectedSignals: {
-      errorType,
-      loader,
-      gameVersion,
-      javaVersion,
-      suspectedMods,
-      likelyCategory,
-    },
+  errorType,
+  loader,
+  launcher,
+  gameVersion,
+  javaVersion,
+  suspectedMods,
+  likelyCategory,
+},
   };
 }
 
@@ -1049,7 +1599,30 @@ function applyForcedSuspiciousMod(
   if (normalized.detectedSignals?.likelyCategory === "advisory_empty_folder") {
   return normalized;
 }
+if (
+  normalized.detectedSignals?.dependencyState ||
+  normalized.detectedSignals?.recommendedAction ||
+  normalized.detectedSignals?.missingComponentDisplay
+) {
+  return {
+    ...normalized,
+    detectedSignals: {
+      ...normalized.detectedSignals,
+      suspectedMods: reorderedMods,
+    },
+  };
+}
   const suspiciousLineLower = (mostSuspiciousLine || "").toLowerCase();
+
+    const runtimeSessionStarted = hasRuntimeSessionStart(
+    [normalized.issue, normalized.mostLikelyCause, normalized.needMoreInfo].join(" ")
+    );
+
+    const lateDisconnectDetected =
+    normalized.issue.toLowerCase().includes("timed out") ||
+    normalized.mostLikelyCause.toLowerCase().includes("timed out") ||
+    normalized.mostLikelyCause.toLowerCase().includes("session timeout") ||
+    normalized.needMoreInfo.toLowerCase().includes("timeout");
 
   let likelyCategory = normalized.detectedSignals?.likelyCategory || "unknown";
   let quickFixFirst = normalized.quickFixFirst;
@@ -1059,6 +1632,16 @@ function applyForcedSuspiciousMod(
   let recommendedFixSteps = normalized.recommendedFixSteps;
   let needMoreInfo = normalized.needMoreInfo;
   let errorType = normalized.detectedSignals?.errorType || "";
+
+    if (runtimeSessionStarted && lateDisconnectDetected) {
+    return {
+      ...normalized,
+      detectedSignals: {
+        ...normalized.detectedSignals,
+        suspectedMods: reorderedMods,
+      },
+    };
+  }
 
   if (
     suspiciousLineLower.includes("classnotfoundexception") ||
@@ -1123,6 +1706,154 @@ function normalizeLogForComparison(log: string) {
     .trim();
 }
 
+const MINECRAFT_COMPONENT_DISPLAY_NAMES: Record<string, string> = {
+  jei: "Just Enough Items (JEI)",
+  "mezz.jei": "Just Enough Items (JEI)",
+  architectury: "Architectury API",
+  "cloth-config": "Cloth Config",
+  clothconfig: "Cloth Config",
+  "animal_feeding_trough": "Animal Feeding Trough",
+  "fabric-api": "Fabric API",
+  fabricapi: "Fabric API",
+  balm: "Balm",
+  appleskin: "AppleSkin",
+};
+
+function normalizeComponentName(value: string) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, " ")
+    .trim();
+}
+
+function extractMissingComponentFromText(text: string) {
+  const source = String(text || "");
+
+  const classMatch =
+    source.match(/ClassNotFoundException:\s*([A-Za-z0-9_./$-]+)/i) ||
+    source.match(/NoClassDefFoundError:\s*([A-Za-z0-9_./$-]+)/i) ||
+    source.match(/ModuleNotFound(?:Error|Exception)[:\s]+([A-Za-z0-9_./$-]+)/i);
+
+  if (classMatch?.[1]) {
+    return classMatch[1];
+  }
+
+  const requiresMatch =
+    source.match(/requires(?:\s+any\s+version\s+of)?\s+([A-Za-z0-9_.-]+)/i) ||
+    source.match(/missing(?:\s+dependency)?[:\s]+([A-Za-z0-9_.-]+)/i);
+
+  if (requiresMatch?.[1]) {
+    return requiresMatch[1];
+  }
+
+  return "";
+}
+
+function inferMinecraftDisplayName(rawComponent: string) {
+  const normalized = normalizeComponentName(rawComponent);
+
+  for (const [key, display] of Object.entries(MINECRAFT_COMPONENT_DISPLAY_NAMES)) {
+    if (normalized.includes(key) || key.includes(normalized)) {
+      return display;
+    }
+  }
+
+  const shortName = normalized
+    .split(/[./\s]+/)
+    .filter(Boolean)
+    .slice(-1)[0];
+
+  if (!shortName) return rawComponent || "required component";
+
+  return shortName
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function resolveDependencyState(params: {
+  rawComponent: string;
+  detectedMods?: string[];
+  crashLog?: string;
+  gameKey?: string;
+}): {
+  dependencyState:
+    | "missing_not_installed"
+    | "installed_but_not_loaded"
+    | "installed_but_wrong_version"
+    | "installed_but_corrupted"
+    | "unknown_dependency_state";
+  recommendedAction:
+    | "install"
+    | "relaunch"
+    | "update_or_match_version"
+    | "reinstall"
+    | "inspect";
+} {
+  const rawComponent = String(params.rawComponent || "");
+  const detectedMods = Array.isArray(params.detectedMods) ? params.detectedMods : [];
+  const crashLog = String(params.crashLog || "");
+  const gameKey = String(params.gameKey || "").toLowerCase();
+
+  const normalizedRaw = normalizeComponentName(rawComponent);
+  const detectedLower = detectedMods.map((m) => normalizeComponentName(m));
+  const textLower = crashLog.toLowerCase();
+
+  const appearsInstalled = detectedLower.some(
+    (mod) =>
+      mod.includes(normalizedRaw) ||
+      normalizedRaw.includes(mod) ||
+      (normalizedRaw.includes("jei") && mod.includes("jei")) ||
+      (normalizedRaw.includes("architect") && mod.includes("architect")) ||
+      (normalizedRaw.includes("cloth") && mod.includes("cloth")) ||
+      (normalizedRaw.includes("feeding") && mod.includes("feeding"))
+  );
+
+  const firstLaunchPattern =
+    textLower.includes("preparing jars on first launch") ||
+    textLower.includes("first launch") ||
+    textLower.includes("this may take a few seconds");
+
+  if (!appearsInstalled) {
+    return {
+      dependencyState: "missing_not_installed",
+      recommendedAction: "install",
+    };
+  }
+
+  if (gameKey.includes("minecraft") && firstLaunchPattern) {
+    return {
+      dependencyState: "installed_but_not_loaded",
+      recommendedAction: "relaunch",
+    };
+  }
+
+  if (
+    textLower.includes("wrong version") ||
+    textLower.includes("requires version") ||
+    textLower.includes("incompatible")
+  ) {
+    return {
+      dependencyState: "installed_but_wrong_version",
+      recommendedAction: "update_or_match_version",
+    };
+  }
+
+  if (
+    textLower.includes("classnotfoundexception") ||
+    textLower.includes("noclassdeffounderror")
+  ) {
+    return {
+      dependencyState: "installed_but_corrupted",
+      recommendedAction: "reinstall",
+    };
+  }
+
+  return {
+    dependencyState: "unknown_dependency_state",
+    recommendedAction: "inspect",
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const redisPro = await isProUser(req);
@@ -1180,8 +1911,7 @@ const safeGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game"
 
 const relevantCrashLog = getRelevantLogWindow(crashLog, safeGameKey);
 const healthyLogDetected = isHealthyLog(relevantCrashLog, safeGameKey);
-const normalizedRelevantCrashLog = normalizeLogForComparison(relevantCrashLog);
-const previousRelevantCrashLog =
+const normalizedRelevantCrashLog = buildSessionFingerprint(relevantCrashLog);const previousRelevantCrashLog =
   typeof continuedDiagnostic?.previousRelevantLog === "string"
     ? normalizeLogForComparison(continuedDiagnostic.previousRelevantLog)
     : "";
@@ -1313,7 +2043,11 @@ Expected JSON shape:
     "gameVersion": "string",
     "javaVersion": "string",
     "suspectedMods": ["string"],
-    "likelyCategory": "mod_conflict | missing_dependency | loader_mismatch | mixin_failure | gpu_driver_issue | out_of_memory | shader_crash | java_mismatch | no_clear_issue_found | unknown"
+    "likelyCategory": "mod_conflict | missing_dependency | dependency_not_initialized | loader_mismatch | mixin_failure | gpu_driver_issue | out_of_memory | shader_crash | java_mismatch | no_clear_issue_found | unknown",
+    "dependencyState": "missing_not_installed | installed_but_not_loaded | installed_but_wrong_version | installed_but_corrupted | unknown_dependency_state",
+    "missingComponentRaw": "string",
+    "missingComponentDisplay": "string",
+    "recommendedAction": "install | relaunch | update_or_match_version | reinstall | inspect"
   }
 }
 
@@ -1500,13 +2234,98 @@ if (healthyLogDetected) {
     ? parsed.detectedSignals.suspectedMods.filter(Boolean)
     : [],
   likelyCategory: parsed.detectedSignals?.likelyCategory || "unknown",
+  dependencyState: parsed.detectedSignals?.dependencyState,
+  missingComponentRaw: parsed.detectedSignals?.missingComponentRaw,
+  missingComponentDisplay: parsed.detectedSignals?.missingComponentDisplay,
+  recommendedAction: parsed.detectedSignals?.recommendedAction,
 },
     };
-    const finalNormalized =
-  normalized.detectedSignals?.likelyCategory === "advisory_empty_folder"
-    ? normalized
+    const finalRelevantLog = crashLog || "";
+
+    const finalIsStardewAdvisoryOnlyLog =
+  safeGameKey === "stardew_valley" &&
+  finalRelevantLog.includes("Mods loaded and ready!") &&
+  finalRelevantLog.includes("None found!") &&
+  !finalRelevantLog.includes("ContentLoadException") &&
+  !finalRelevantLog.includes("FileNotFoundException") &&
+  !finalRelevantLog.includes("ClassNotFoundException") &&
+  !finalRelevantLog.includes("NoClassDefFoundError") &&
+  !finalRelevantLog.includes("Unhandled exception") &&
+  !finalRelevantLog.includes("The game failed to launch");
+
+const finalIsMissingBaseGameFile =
+  finalRelevantLog.includes("ContentLoadException") &&
+  (finalRelevantLog.includes(".xnb") || finalRelevantLog.includes(".xgs"));
+
+const correctedNormalized: AnalyzeModelResponse = finalIsMissingBaseGameFile
+  ? {
+      ...normalized,
+      quickFixFirst: "Verify Stardew Valley’s game files through Steam.",
+      issue:
+        "The game is missing or unable to load required base game files, so it cannot finish launching.",
+      confidenceLevel: "High",
+      probabilityBreakdown: ["100% - Missing or corrupted base game files"],
+      mostLikelyCause:
+        "A required Stardew Valley Content file, such as an .xnb or .xgs asset, is missing or corrupted.",
+      recommendedFixSteps: [
+        "Open Steam.",
+        "Right-click Stardew Valley.",
+        "Choose Properties.",
+        "Go to Installed Files.",
+        "Click Verify integrity of game files.",
+        "After Steam finishes repairing files, launch Stardew Valley again.",
+      ],
+      needMoreInfo:
+        "If verifying files does not fix it, reinstall Stardew Valley or provide the newest SMAPI log after the next failed launch.",
+      detectedSignals: {
+        ...normalized.detectedSignals,
+        errorType: "ContentLoadException",
+        loader: "SMAPI",
+        suspectedMods: [],
+        likelyCategory: "game_files_corrupt",
+        dependencyState: undefined,
+        missingComponentRaw: undefined,
+        missingComponentDisplay: undefined,
+        recommendedAction: undefined,
+      },
+    }
+  : finalIsStardewAdvisoryOnlyLog
+  ? {
+      ...normalized,
+      quickFixFirst: "No fix needed yet — this Stardew Valley log looks healthy.",
+      issue:
+        "SMAPI loaded the mods successfully and did not find a real crash, missing dependency, or software conflict.",
+      confidenceLevel: "High",
+      probabilityBreakdown: ["100% - No active crash found in this log"],
+      mostLikelyCause:
+        "The warnings shown are normal SMAPI advisory notes about mods that patch game code, not confirmed crash causes.",
+      recommendedFixSteps: [
+        "Launch Stardew Valley and test normally.",
+        "Only remove mods if the game actually crashes or has a visible issue.",
+        "If a crash happens, load the newest SMAPI log created after that crash.",
+      ],
+      needMoreInfo:
+        "No more info is needed unless the game crashes or behaves incorrectly after this log.",
+      detectedSignals: {
+        ...normalized.detectedSignals,
+        errorType: "",
+        loader: "SMAPI",
+        suspectedMods: [],
+        likelyCategory: "no_clear_issue_found",
+        dependencyState: undefined,
+        missingComponentRaw: undefined,
+        missingComponentDisplay: undefined,
+        recommendedAction: undefined,
+      },
+    }
+  : normalized;
+const finalNormalized =
+  correctedNormalized.detectedSignals?.likelyCategory === "advisory_empty_folder" ||
+  correctedNormalized.detectedSignals?.likelyCategory === "game_files_corrupt" ||
+  correctedNormalized.detectedSignals?.likelyCategory === "no_clear_issue_found"
+    ? correctedNormalized
     : applyForcedSuspiciousMod(
-        normalized,
+        correctedNormalized,
         forcedSuspiciousMod,
         typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""
       );

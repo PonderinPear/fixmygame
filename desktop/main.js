@@ -2,10 +2,23 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const dotenv = require("dotenv");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const { spawn, exec } = require("child_process");
 const { scanLogsForGame, scanFolderRecursive } = require("./fileScanner");
 const isDev = !app.isPackaged;
 const os = require("os");
+const { autoUpdater } = require("electron-updater");
+
+app.whenReady().then(() => {
+  autoUpdater.checkForUpdatesAndNotify();
+});
+autoUpdater.on("update-available", () => {
+  console.log("Update available");
+});
+
+autoUpdater.on("update-downloaded", () => {
+  autoUpdater.quitAndInstall();
+});
 
 let mainWindow;
 let nextServerProcess = null;
@@ -1009,6 +1022,283 @@ function findSafeFixCandidate(modsFolder, suspectNames = []) {
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0];
 }
+
+function pathExists(targetPath) {
+  try {
+    fs.accessSync(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function safeStat(targetPath) {
+  try {
+    return await fsp.stat(targetPath);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeModFolderName(name) {
+  return String(name || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+    .trim();
+}
+
+function getStardewModsPath() {
+  return path.join(
+    "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Stardew Valley\\Mods"
+  );
+}
+
+function buildCommonSearchRoots(gameKey) {
+  const home = os.homedir();
+  const roots = [
+    path.join(home, "Downloads"),
+    path.join(home, "Desktop"),
+    path.join(home, "Documents"),
+    path.join(home, "OneDrive", "Desktop"),
+    path.join(home, "OneDrive", "Documents"),
+    path.join(home, "Pictures"),
+    path.join(home, "Saved Games"),
+    getBackupRoot(),
+    getQuarantineRoot(),
+  ];
+
+  const modsFolder = getModsFolderForGame(gameKey);
+  if (modsFolder) {
+    roots.unshift(modsFolder);
+    roots.push(path.dirname(modsFolder));
+  }
+
+  if (process.platform === "win32") {
+    roots.push(
+      path.join(home, "AppData", "Roaming"),
+      path.join(home, "AppData", "Local"),
+      "C:\\Mod Staging",
+      "D:\\Mod Staging",
+      "C:\\Games",
+      "D:\\Games"
+    );
+  }
+
+  return roots.filter((root, index, arr) => {
+    if (!root) return false;
+    return arr.indexOf(root) === index;
+  });
+}
+
+function normalizeSearchName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[\s_\-()[\].]+/g, "")
+    .trim();
+}
+
+async function findModCandidates(rootDir, modName, maxDepth = 7, matches = []) {
+  if (!pathExists(rootDir)) return matches;
+
+  const normalizedTarget = normalizeSearchName(modName);
+  const queue = [{ dir: rootDir, depth: 0 }];
+  const archiveExtensions = [".zip", ".rar", ".7z"];
+  const modFileExtensions = [".jar", ".dll", ".pak", ".package", ".ts4script"];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) break;
+    if (current.depth > maxDepth) continue;
+
+    let entries = [];
+    try {
+      entries = await fsp.readdir(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(current.dir, entry.name);
+      const normalizedEntry = normalizeSearchName(entry.name);
+
+      const nameMatches =
+        normalizedEntry === normalizedTarget ||
+        normalizedEntry.includes(normalizedTarget) ||
+        normalizedTarget.includes(normalizedEntry);
+
+      if (entry.isDirectory()) {
+        if (nameMatches) {
+          matches.push({
+            path: fullPath,
+            itemType: "folder",
+            candidateKind: "mod_folder",
+            name: entry.name,
+          });
+        }
+
+        queue.push({ dir: fullPath, depth: current.depth + 1 });
+        continue;
+      }
+
+      if (entry.isFile()) {
+        const lowerName = entry.name.toLowerCase();
+        const isArchive = archiveExtensions.some((ext) => lowerName.endsWith(ext));
+        const isModFile = modFileExtensions.some((ext) => lowerName.endsWith(ext));
+
+        if (nameMatches && (isArchive || isModFile)) {
+          matches.push({
+            path: fullPath,
+            itemType: "file",
+            candidateKind: isArchive ? "archive_file" : "mod_file",
+            name: entry.name,
+          });
+        }
+      }
+    }
+  }
+
+  return matches;
+}
+
+async function findMissingModOnDevice({ gameKey, modName }) {
+  const safeModName = sanitizeModFolderName(modName);
+  if (!safeModName) {
+    return {
+      found: false,
+      foundPath: "",
+      expectedPath: "",
+      searchedRoots: [],
+      allMatches: [],
+    };
+  }
+
+  const modsFolder = getModsFolderForGame(gameKey);
+  const expectedPath = modsFolder ? path.join(modsFolder, safeModName) : "";
+
+  if (expectedPath && pathExists(expectedPath)) {
+    return {
+      found: true,
+      foundPath: expectedPath,
+      expectedPath,
+      alreadyInCorrectPlace: true,
+      searchedRoots: [expectedPath],
+      allMatches: [
+        {
+          path: expectedPath,
+          itemType: "folder",
+          candidateKind: "mod_folder",
+          name: path.basename(expectedPath),
+        },
+      ],
+    };
+  }
+
+  const roots = buildCommonSearchRoots(gameKey);
+  let matches = [];
+
+  for (const root of roots) {
+    matches = await findModCandidates(root, safeModName, 7, matches);
+  }
+
+  const uniqueMatches = Array.from(
+    new Map(matches.map((item) => [item.path.toLowerCase(), item])).values()
+  );
+
+  uniqueMatches.sort((a, b) => {
+    const aLower = a.path.toLowerCase();
+    const bLower = b.path.toLowerCase();
+
+    const score = (itemLower, kind) => {
+      let value = 0;
+      if (itemLower.includes("\\downloads\\")) value += 6;
+      if (itemLower.includes("\\desktop\\")) value += 5;
+      if (itemLower.includes("\\documents\\")) value += 4;
+      if (itemLower.includes("\\quarantine\\")) value += 2;
+      if (itemLower.includes("\\backup")) value += 1;
+      if (kind === "mod_folder") value += 4;
+      if (kind === "mod_file") value += 3;
+      if (kind === "archive_file") value += 2;
+      return value;
+    };
+
+    return score(bLower, b.candidateKind) - score(aLower, a.candidateKind);
+  });
+
+  const best = uniqueMatches[0];
+
+  return {
+    found: uniqueMatches.length > 0,
+    foundPath: best?.path || "",
+    expectedPath,
+    alreadyInCorrectPlace: false,
+    searchedRoots: roots,
+    allMatches: uniqueMatches,
+    foundItemType: best?.itemType || "",
+    foundCandidateKind: best?.candidateKind || "",
+  };
+}
+
+async function moveFoundModToModsFolder({ gameKey, modName, sourcePath }) {
+  const safeModName = sanitizeModFolderName(modName);
+  if (!safeModName) {
+    throw new Error("Missing mod name.");
+  }
+
+  if (!sourcePath || !pathExists(sourcePath)) {
+    throw new Error("The found mod folder no longer exists.");
+  }
+
+  const modsPath = getModsFolderForGame(gameKey);
+
+  if (!modsPath) {
+    throw new Error("This game does not have a configured Mods folder yet.");
+  }
+
+  await fsp.mkdir(modsPath, { recursive: true });
+
+  const destinationPath = path.join(modsPath, safeModName);
+
+  if (
+    path.resolve(sourcePath).toLowerCase() ===
+    path.resolve(destinationPath).toLowerCase()
+  ) {
+    return {
+      moved: false,
+      alreadyInCorrectPlace: true,
+      sourcePath,
+      destinationPath,
+    };
+  }
+
+  if (pathExists(destinationPath)) {
+    throw new Error("A folder with that mod name already exists in the Mods folder.");
+  }
+
+  await fsp.rename(sourcePath, destinationPath);
+
+  return {
+    moved: true,
+    alreadyInCorrectPlace: false,
+    sourcePath,
+    destinationPath,
+  };
+}
+
+ipcMain.handle("find-missing-mod-on-device", async (_event, payload) => {
+  return await findMissingModOnDevice(payload || {});
+});
+
+ipcMain.handle("move-found-mod-to-mods-folder", async (_event, payload) => {
+  return await moveFoundModToModsFolder(payload || {});
+});
+
+ipcMain.handle("open-external-url", async (_event, url) => {
+  const safeUrl = String(url || "").trim();
+  if (!safeUrl) return { opened: false };
+
+  await shell.openExternal(safeUrl);
+  return { opened: true };
+});
 
 ipcMain.handle("close-app", async () => {
   try {

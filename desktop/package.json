@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "dotenv": "^17.4.0",
+    "electron-updater": "^6.8.3",
     "openai": "^6.22.0",
     "zod": "^4.3.6"
   },
@@ -43,14 +44,26 @@
       {
         "from": "../web/public",
         "to": "web-standalone/web/public"
-      },
-      {
-    "from": "../web/.env.production",
-    "to": "web-standalone/web/.env.production"
-  }
+      }
     ],
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FixMyGame"
     }
+    ,
+"publish": [
+  {
+    "provider": "github",
+    "owner": "PonderinPear",
+    "repo": "fixmygame-ai"
+  }
+]
   }
 }

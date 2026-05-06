@@ -15,6 +15,14 @@ contextBridge.exposeInMainWorld("fixMyGame", {
   openFolderPath: (targetPath) => ipcRenderer.invoke("open-folder-path", targetPath),
   detectGameInstall: (gameKey) => ipcRenderer.invoke("detect-game-install", gameKey),
   detectSystemSpecs: () => ipcRenderer.invoke("detect-system-specs"),
+  findMissingModOnDevice: (payload) =>
+  ipcRenderer.invoke("find-missing-mod-on-device", payload),
+
+moveFoundModToModsFolder: (payload) =>
+  ipcRenderer.invoke("move-found-mod-to-mods-folder", payload),
+
+openExternalUrl: (url) =>
+  ipcRenderer.invoke("open-external-url", url),
   closeApp: () => ipcRenderer.invoke("close-app"),
   previewSafeFix: (payload) => ipcRenderer.invoke("preview-safe-fix", payload),
   applySafeFix: (payload) => ipcRenderer.invoke("apply-safe-fix", payload),
