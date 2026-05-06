@@ -18,6 +18,8 @@ export async function POST(req: Request) {
     const snapshot = {
       id,
 
+      routeVersion: "v2-diagnostic-mapping",
+      
       // identity
       vid: body?.vid || "unknown",
       sessionId: body?.sessionId || "unknown_session",
