@@ -9,19 +9,25 @@ const redis = Redis.fromEnv();
 
 export async function GET() {
   let betaOpen = true;
+  let redisValue: string | null = null;
+  let redisReadError = "";
 
   try {
-    const redisValue = await redis.get<string>("beta:open");
+    redisValue = await redis.get<string>("beta:open");
 
     if (redisValue === "1") betaOpen = true;
     if (redisValue === "0") betaOpen = false;
   } catch (error) {
-    console.error("Failed to read beta status from Redis:", error);
+    redisReadError =
+      error instanceof Error ? error.message : "Failed to read Redis.";
   }
 
   return NextResponse.json(
     {
       betaOpen,
+      redisValue,
+      redisReadError,
+      debug: "beta-status-v3-live-redis",
       message: betaOpen
         ? "FixMyGame beta is active."
         : "The FixMyGame beta period has ended. Access is currently closed.",
