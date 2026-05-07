@@ -3521,8 +3521,11 @@ function acceptAuthorizationGate() {
 async function fetchBetaStatus() {
   try {
     const data = await fetchJSON<{ betaOpen: boolean; message?: string }>(
-      "/api/beta-status",
-      { method: "GET" }
+      `${API_BASE_URL}/api/beta-status?t=${Date.now()}`,
+      {
+        method: "GET",
+        cache: "no-store",
+      }
     );
 
     setBetaOpen(Boolean(data.betaOpen));
@@ -7636,7 +7639,7 @@ setTimeout(() => {
           onClick={acceptAuthorizationGate}
           className="rounded-xl bg-cyan-500 px-4 py-2 font-semibold text-black transition hover:bg-cyan-400"
         >
-          Accept and Continue
+          Continue
         </button>
       </div>
     </div>
