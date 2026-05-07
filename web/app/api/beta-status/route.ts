@@ -9,14 +9,15 @@ const redis = Redis.fromEnv();
 
 export async function GET() {
   let betaOpen = true;
-  let redisValue: string | null = null;
+  let redisValue: unknown = null;
   let redisReadError = "";
 
   try {
-    redisValue = await redis.get<string>("beta:open");
+    redisValue = await redis.get("beta:open");
 
-    if (redisValue === "1") betaOpen = true;
-    if (redisValue === "0") betaOpen = false;
+if (redisValue !== null) {
+  betaOpen = String(redisValue) === "1";
+}
   } catch (error) {
     redisReadError =
       error instanceof Error ? error.message : "Failed to read Redis.";
