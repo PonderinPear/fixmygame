@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const snapshots: Snapshot[] = [];
 
   for (const key of keys.slice(0, 100)) {
-    const data = await redis.get(key);
+    const data = await redis.get<Snapshot>(key);
     if (data) snapshots.push(data);
   }
 
