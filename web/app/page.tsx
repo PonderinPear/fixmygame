@@ -3008,7 +3008,10 @@ useEffect(() => {
   }
 }, [selectedGameKey, gpuModel, driverVersion, graphicsApiMode]);
 
-  const canRun = useMemo(() => isPro || remaining > 0, [isPro, remaining]);
+  const canRun = useMemo(
+  () => isPro || isBetaAccess || remaining > 0,
+  [isPro, isBetaAccess, remaining]
+);
   const progressState = useMemo(
   () =>
     getProgressState({
@@ -5331,13 +5334,6 @@ if (checkingBetaStatus) {
     </main>
   );
 }
-if (checkingBetaStatus) {
-  return (
-    <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
-      <div className="text-sm text-white/50">Checking beta access...</div>
-    </main>
-  );
-}
 
 if (!betaOpen) {
   return (
@@ -5559,7 +5555,7 @@ return (
   disabled={scanningLogs || !selectedGameProfile.supportsAutoDetect}
   className={[
     "rounded-xl px-4 py-2 font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-    isPro
+    isPro || isBetaAccess
       ? "bg-cyan-600 hover:bg-cyan-500"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
@@ -5567,10 +5563,10 @@ return (
   {scanningLogs
   ? "Scanning..."
   : selectedGameProfile.supportsAutoDetect
-  ? isPro
+  ? isPro || isBetaAccess
     ? `Auto Detect ${gameTitle} Logs`
     : `Auto Detect ${gameTitle} Logs (Pro)`
-  : `Auto Detect ${gameTitle} Logs Not Available Yet`}
+    : `Auto Detect ${gameTitle} Logs Not Available Yet`}
 </button>
 <button
   type="button"
@@ -5585,7 +5581,7 @@ onClick={() => {
 }}
   className={[
     "rounded-xl px-4 py-2 font-medium transition",
-    isPro
+    isPro || isBetaAccess
       ? "bg-white/10 hover:bg-white/15"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
@@ -6334,12 +6330,12 @@ setTimeout(() => {
   }}
   className={[
     "rounded-lg px-3 py-1.5 text-sm transition",
-    isPro
+    isPro || isBetaAccess
       ? "border border-white/10 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
       : "border border-amber-400/20 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15",
   ].join(" ")}
 >
-    {isPro ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
+    {isPro || isBetaAccess ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
 </button>
 
   <button
