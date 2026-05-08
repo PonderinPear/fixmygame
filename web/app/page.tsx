@@ -420,7 +420,7 @@ function getFixPlan(
         : category === "loader_mismatch"
         ? "Loader mismatch repair preview"
         : category === "mod_conflict"
-        ? "Mod conflict repair preview"
+        ? "Safe repair preview"
         : "Repair preview",
     description: getFixPlanDescription(category),
     actions,
@@ -433,7 +433,7 @@ function getFixPlanDescription(category: string) {
   }
 
   if (category === "mod_conflict") {
-    return "FixMyGame can back up and quarantine the most likely broken mod or folder.";
+    return "Backs up and quarantines the likely problem mod.";
   }
 
   if (category === "loader_mismatch") {
@@ -3763,6 +3763,7 @@ const safeFixSuspects = useMemo(() => {
 }, [displayAnalysis, displayDetectedSignals, liveMods]);
 
 const canApplySafeFix =
+  appSettings.enableSafeFix &&
   desktopConnected &&
   Boolean(gameInstallPath) &&
   safeFixSuspects.length > 0 &&
@@ -3890,11 +3891,7 @@ setSupportTelemetryEnabled(savedSupportTelemetry === "true");
   }
 );
 
-const debug = await fetchDebugWithRetry();
-
-setDebugProStatus(
-  `headerVid=${debug.headerVid ?? "null"} | cookieVid=${debug.cookieVid ?? "null"} | cookiePro=${debug.cookiePro ?? "null"} | resolvedVid=${debug.resolvedVid ?? "null"} | redisPro=${debug.redisPro ?? "null"}`
-);
+setDebugProStatus("debug skipped during beta");
       if (cancelled) return;
 
       setIsPro(Boolean(data.isPro));
@@ -4014,30 +4011,30 @@ function buildSafeFixPlanPreview(params: {
   const primarySuspect = suspectMods[0] || "the top matched suspect";
 
   return [
-    {
-      id: "safe_fix_mods_used",
-      title: "Safe Fix: checked likely problem mods",
-      detail:
-        suspectMods.length > 0
-          ? `FixMyGame will check these suspected mods first: ${suspectMods.join(", ")}.`
-          : "FixMyGame will check the most likely suspect from your diagnostic signals.",
-    },
-    {
-      id: "safe_fix_move_candidate",
-      title: "Safe Fix: move likely problem mod",
-      detail: `FixMyGame will back up and quarantine ${primarySuspect} if it is the best safe-fix match in your Mods folder.`,
-    },
-    {
-      id: "safe_fix_backup_created",
-      title: "Safe Fix: backup created",
-      detail: "FixMyGame will create a backup before moving anything.",
-    },
-    {
-      id: "safe_fix_new_location",
-      title: "Safe Fix: new file location",
-      detail: "FixMyGame will move the matched item into its quarantine folder so the game no longer loads it.",
-    },
-  ];
+  {
+    id: "safe_fix_mods_used",
+    title: "Safe Repair: checked likely problem mods",
+    detail:
+      suspectMods.length > 0
+        ? `FixMyGame will check these suspected mods first: ${suspectMods.join(", ")}.`
+        : "FixMyGame will check the most likely suspect from your diagnostic signals.",
+  },
+  {
+    id: "safe_fix_move_candidate",
+    title: "Safe Repair: temporarily disable likely problem mod",
+    detail: `FixMyGame will back up and move ${primarySuspect} into quarantine if it is the best safe match in your Mods folder.`,
+  },
+  {
+    id: "safe_fix_backup_created",
+    title: "Safe Repair: backup created first",
+    detail: "FixMyGame will create a backup before moving anything.",
+  },
+  {
+    id: "safe_fix_new_location",
+    title: "Safe Repair: quarantine location saved",
+    detail: "FixMyGame will save the quarantined item location so you can undo the repair later.",
+  },
+];
 }
 
   async function applySafeFixNow() {
@@ -4105,7 +4102,7 @@ const movedFile = response.movedFile || "suspected mod";
 setFixExecutionResults([
   {
     id: "safe_fix_mods_used",
-    title: "Safe Fix: checked likely problem mods",
+    title: "Safe Repair: checked likely problem mods",
     ok: true,
     detail:
       suspectMods.length > 0
@@ -4114,13 +4111,13 @@ setFixExecutionResults([
   },
   {
     id: "safe_fix_move_candidate",
-    title: "Safe Fix: moved likely problem mod",
+    title: "Safe Repair: moved likely problem mod",
     ok: true,
-    detail: `Moved ${movedFile} to quarantine successfully.`,
+    detail: `${movedFile} was backed up and moved into quarantine successfully.`,
   },
   {
     id: "safe_fix_backup_created",
-    title: "Safe Fix: backup created",
+    title: "Safe Repair: backup created",
     ok: true,
     detail: response.backupPath
       ? `Backup created at: ${response.backupPath}`
@@ -4128,7 +4125,7 @@ setFixExecutionResults([
   },
   {
     id: "safe_fix_new_location",
-    title: "Safe Fix: new file location",
+    title: "Safe Repair: new file location",
     ok: true,
     detail: response.quarantinePath
       ? `Stored quarantined file at: ${response.quarantinePath}`
@@ -4139,12 +4136,12 @@ setFixExecutionResults([
 setShowFixPreviewModal(false);
 
 showActionMessage(
-  `Safe Fix applied: moved ${movedFile}. Launch the game again, then run another diagnostic if needed.`,
+  `Safe Repair applied: ${movedFile} was backed up and temporarily disabled. Launch the game again, then run another diagnostic if needed.`,
   "fixAssistant"
 );
 
     const historyText = [
-      `Safe Fix applied.`,
+      `Safe Repair applied.`,
       ``,
       `Moved File: ${movedFile}`,
       `Suspected Mods: ${suspectMods.join(", ") || "None"}`,
@@ -4158,7 +4155,7 @@ showActionMessage(
       gameKey: selectedGameKey,
       gameTitle,
       type: "fix_plan",
-      title: `${gameTitle} safe fix`,
+      title: `${gameTitle} safe repair`,
       text: historyText,
     });
 
@@ -5979,7 +5976,7 @@ onClick={() => {
     disabled={!hasDiagnosticResult || !fixPlan}
     className="w-full text-left text-white transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    🛠️ Fix This for Me
+    🛠️ Safe Repair
   </button>
 
   <p className="mt-2 ml-6 text-xs text-white/60">
@@ -6400,7 +6397,7 @@ setTimeout(() => {
       disabled={!hasDiagnosticResult || !fixPlan}
       className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      🛠️ Fix This for Me
+      🛠️ Safe Repair
     </button>
   </div>
 </div>
@@ -6926,13 +6923,13 @@ setTimeout(() => {
   </div>
 
   <SettingToggleRow
-    label="Enable Smart Fix"
-    description="Suggest safe, guided fixes for detected issues."
-    checked={appSettings.enableSafeFix}
-    onChange={(checked) =>
-      setAppSettings((prev) => ({ ...prev, enableSafeFix: checked }))
-    }
-  />
+  label="Enable Safe Repair"
+  description="Allow FixMyGame to suggest safe repair actions, like backing up and temporarily disabling likely problem mods."
+  checked={appSettings.enableSafeFix}
+  onChange={(checked) =>
+    setAppSettings((prev) => ({ ...prev, enableSafeFix: checked }))
+  }
+/>
 
   <SettingToggleRow
     label="Confirm Before Applying Fix"
@@ -7324,15 +7321,17 @@ setTimeout(() => {
       : missingModDownloadUrl
       ? "Download Missing Mod"
       : "Download Link Not Found"
-    : applyingSafeFix
-    ? "Applying Safe Fix..."
-    : !gameInstallPath
-    ? "Apply Safe Fix (Needs Local Game Install)"
-    : activeSafeFixCategory !== "mod_conflict"
-    ? "Apply Safe Fix (Not Available for This Result)"
-    : safeFixSuspects.length === 0
-    ? "Apply Safe Fix (No Suspected Mods)"
-    : "Apply Safe Fix"}
+      : applyingSafeFix
+? "Applying Safe Repair..."
+: !appSettings.enableSafeFix
+? "Safe Repair Disabled in Settings"
+: !gameInstallPath
+? "Safe Repair Needs Local Game Install"
+: activeSafeFixCategory !== "mod_conflict"
+? "Safe Repair Not Available for This Result"
+: safeFixSuspects.length === 0
+? "Safe Repair Needs a Suspected Mod"
+: "Apply Safe Repair"}
 </button>
 
     <button
