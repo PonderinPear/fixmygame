@@ -532,12 +532,14 @@ writeStartupLog("Server exists:", fs.existsSync(serverPath));
     stdio: "inherit",
     shell: false,
     env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      PORT: "3001",
-      HOSTNAME: "127.0.0.1",
-      NODE_ENV: "production",
-    },
+  ...process.env,
+  ELECTRON_RUN_AS_NODE: "1",
+  PORT: "3001",
+  HOSTNAME: "127.0.0.1",
+  NODE_ENV: "production",
+  NEXT_PUBLIC_API_BASE_URL: "https://fixmygame.vercel.app",
+  NEXT_PUBLIC_BASE_URL: "https://fixmygame.vercel.app",
+},
   }
 );
     }
