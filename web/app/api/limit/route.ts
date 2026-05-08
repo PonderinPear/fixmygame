@@ -46,35 +46,55 @@ function getClientKey(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const redis = await getRedis();
+  try {
+    const redis = await getRedis();
 
-  // ✅ BETA OVERRIDE (ADD THIS)
-  const isBetaOpen = (await redis.get("beta:open")) === "1";
+    // ✅ BETA OVERRIDE
+    const betaValue = await redis.get("beta:open");
+    const isBetaOpen = String(betaValue) === "1";
 
-  if (isBetaOpen) {
+    if (isBetaOpen) {
+      return jsonResponse({
+        isPro: false,
+        remaining: 999,
+        limit: 999,
+        isBeta: true,
+      });
+    }
+
+    const redisPro = await isProUser(req);
+    const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
+
+    if (redisPro || cookiePro) {
+      return jsonResponse({
+        isPro: true,
+        remaining: 999,
+        limit: 999,
+        isBeta: false,
+      });
+    }
+
+    const clientKey = getClientKey(req);
+    const key = `limit:${today()}:${clientKey}`;
+
+    const raw = await redis.get(key);
+    const count = raw ? Number(raw) : 0;
+
     return jsonResponse({
       isPro: false,
-      remaining: Infinity,
-      isBeta: true,
+      remaining: Math.max(0, DAILY_LIMIT - count),
+      limit: DAILY_LIMIT,
+      isBeta: false,
     });
+  } catch (error) {
+    return jsonResponse(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load usage limit.",
+      },
+      500
+    );
   }
-
-  // existing logic continues...
-  const redisPro = await isProUser(req);
-  const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
-
-  if (redisPro || cookiePro) {
-    return jsonResponse({ isPro: true, remaining: Infinity });
-  }
-
-  const clientKey = getClientKey(req);
-  const key = `limit:${today()}:${clientKey}`;
-
-  const raw = await redis.get(key);
-  const count = raw ? Number(raw) : 0;
-
-  return jsonResponse({
-    isPro: false,
-    remaining: Math.max(0, DAILY_LIMIT - count),
-  });
 }
