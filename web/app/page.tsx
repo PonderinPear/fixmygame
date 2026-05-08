@@ -144,6 +144,7 @@ type LimitResponse = {
   isPro: boolean;
   remaining: number;
   limit: number;
+  isBeta?: boolean;
 };
 
 type AnalyzeResponse = {
@@ -2846,6 +2847,7 @@ export default function Page() {
   const [isPro, setIsPro] = useState(false);
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
+  const [isBetaAccess, setIsBetaAccess] = useState(false);
 
   const [autoDetectStatus, setAutoDetectStatus] = useState<
   "idle" | "logs_found" | "no_logs" | "not_installed"
@@ -3026,6 +3028,10 @@ useEffect(() => {
     runningFixPlan,
   ]
 );
+
+const progressPercent = progressState
+  ? Math.min(95, 15 + progressTick * 8)
+  : 0;
 
 useEffect(() => {
   const isProgressActive =
@@ -3873,7 +3879,13 @@ setSupportTelemetryEnabled(savedSupportTelemetry === "true");
   async function loadLimit() {
     setLoadingLimit(true);
     try {
-    const data = await fetchJSON<LimitResponse>("/api/limit", { method: "GET" });
+    const data = await fetchJSON<LimitResponse>(
+  `${API_BASE_URL}/api/limit?t=${Date.now()}`,
+  {
+    method: "GET",
+    cache: "no-store",
+  }
+);
 
 const debug = await fetchDebugWithRetry();
 
@@ -3883,11 +3895,13 @@ setDebugProStatus(
       if (cancelled) return;
 
       setIsPro(Boolean(data.isPro));
+      setIsBetaAccess(Boolean(data.isBeta));
       setLimit(Number.isFinite(data.limit) ? data.limit : 3);
       setRemaining(Number.isFinite(data.remaining) ? data.remaining : 3);
     } catch {
       if (cancelled) return;
       setIsPro(false);
+      setIsBetaAccess(false);
       setLimit(3);
       setRemaining(3);
       setDebugProStatus("debug-pro temporarily unavailable");
@@ -4935,10 +4949,18 @@ pushSupportEvent("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
 await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
 }
 
-      const lim = await fetchJSON<LimitResponse>("/api/limit", { method: "GET" });
-      setIsPro(Boolean(lim.isPro));
-      setLimit(Number.isFinite(lim.limit) ? lim.limit : 3);
-      setRemaining(Number.isFinite(lim.remaining) ? lim.remaining : 0);
+      const lim = await fetchJSON<LimitResponse>(
+  `${API_BASE_URL}/api/limit?t=${Date.now()}`,
+  {
+    method: "GET",
+    cache: "no-store",
+  }
+);
+
+setIsPro(Boolean(lim.isPro));
+setIsBetaAccess(Boolean(lim.isBeta));
+setLimit(Number.isFinite(lim.limit) ? lim.limit : 3);
+setRemaining(Number.isFinite(lim.remaining) ? lim.remaining : 0);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Diagnostic failed.";
       setErrorMsg(msg);
@@ -5403,14 +5425,14 @@ return (
         : "border border-white/10 bg-white/5 text-white/80",
     ].join(" ")}
   >
-    {isPro ? "Pro Plan" : "Free Plan"}
+    {isPro ? "Pro Plan" : isBetaAccess ? "Beta: Unlimited" : "Free Plan"}
   </span>
 
   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
     {loadingLimit
       ? "Checking usage..."
-      : isPro
-      ? "Unlimited diagnostics"
+      : isPro || isBetaAccess
+      ? "Unlimited beta access enabled"
       : `${remaining}/${limit} diagnostics left today`}
   </span>
 
@@ -5526,7 +5548,7 @@ return (
   <button
   type="button"
   onClick={() => {
-    if (!isPro) {
+    if (!isPro && !isBetaAccess) {
       setProModalContext("autoDetect");
       setShowProModal(true);
       return;
@@ -5553,7 +5575,7 @@ return (
 <button
   type="button"
 onClick={() => {
-  if (!isPro) {
+  if (!isPro && !isBetaAccess) {
     setProModalContext("folderScan");
     setShowProModal(true);
     return;
@@ -5568,7 +5590,7 @@ onClick={() => {
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
 >
-  {isPro ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
+  {isPro || isBetaAccess ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
 </button>
 </div>
 
@@ -6071,7 +6093,10 @@ onClick={() => {
     </div>
 
     <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
-  <div className="h-2 w-1/3 animate-[progressSlide_1.4s_ease-in-out_infinite] rounded-full bg-cyan-400" />
+  <div
+    className="h-2 rounded-full bg-cyan-400 transition-all duration-700 ease-out"
+    style={{ width: `${progressPercent}%` }}
+  />
 </div>
 
 <style jsx>{`
@@ -6096,7 +6121,7 @@ onClick={() => {
       : progressState.activeStep;
 
   const isActive = index === animatedActiveStep;
-  const isDone = index < animatedActiveStep;
+  const isDone = false;
 
         return (
           <div
@@ -6293,7 +6318,7 @@ setTimeout(() => {
 <button
   type="button"
   onClick={() => {
-    if (!isPro) {
+    if (!isPro && !isBetaAccess) {
       setProModalContext("saveAnalysis");
       setShowProModal(true);
       return;
