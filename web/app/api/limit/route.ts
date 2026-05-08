@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
-import { isProUser } from "@/lib/pro";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,18 +59,6 @@ export async function GET(req: NextRequest) {
         remaining: 999,
         limit: 999,
         isBeta: true,
-      });
-    }
-
-    const redisPro = await isProUser(req);
-    const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
-
-    if (redisPro || cookiePro) {
-      return jsonResponse({
-        isPro: true,
-        remaining: 999,
-        limit: 999,
-        isBeta: false,
       });
     }
 
