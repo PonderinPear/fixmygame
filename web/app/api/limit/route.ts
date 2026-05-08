@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRedis } from "@/lib/redis";
+import { Redis } from "@upstash/redis";
 import { isProUser } from "@/lib/pro";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const redis = Redis.fromEnv();
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,8 +27,6 @@ export async function OPTIONS() {
     headers: corsHeaders,
   });
 }
-
-export const runtime = "nodejs";
 
 const DAILY_LIMIT = 3;
 
@@ -47,9 +51,6 @@ function getClientKey(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const redis = await getRedis();
-
-    // ✅ BETA OVERRIDE
     const betaValue = await redis.get("beta:open");
     const isBetaOpen = String(betaValue) === "1";
 
