@@ -4810,12 +4810,12 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
     });
 
     const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
-      "/api/support-snapshot",
-      {
-        method: "POST",
-        body: JSON.stringify(snapshot),
-      }
-    );
+  `${API_BASE_URL}/api/support-snapshot`,
+  {
+    method: "POST",
+    body: JSON.stringify(snapshot),
+  }
+);
 
     console.log("Support snapshot sent:", response);
   } catch (error) {
@@ -5902,21 +5902,27 @@ onClick={() => {
                 "Pro: Unlimited"
               ) : (
                 <>
-                  Free diagnostics left today:{" "}
-                  <span className="font-semibold">{remaining}</span> / {limit}
+                  {isBetaAccess ? (
+  "Unlimited beta access enabled"
+) : (
+  <>
+    Free diagnostics left today:{" "}
+    <span className="font-semibold">{remaining}</span> / {limit}
+  </>
+)}
                 </>
               )}
             </div>
 
-            {!isPro && (
-              <button
-                type="button"
-                className="underline underline-offset-4 hover:text-white"
-                onClick={upgradeToPro}
-              >
-                Upgrade to Pro
-              </button>
-            )}
+            {!isPro && !isBetaAccess && (
+  <button
+    type="button"
+    className="underline underline-offset-4 hover:text-white"
+    onClick={upgradeToPro}
+  >
+    Upgrade to Pro
+  </button>
+)}
           </div>
 
 {!loadingLimit && !isPro && remaining <= 0 ? (
