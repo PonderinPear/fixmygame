@@ -46,6 +46,20 @@ function getClientKey(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  const redis = await getRedis();
+
+  // ✅ BETA OVERRIDE (ADD THIS)
+  const isBetaOpen = (await redis.get("beta:open")) === "1";
+
+  if (isBetaOpen) {
+    return jsonResponse({
+      isPro: false,
+      remaining: Infinity,
+      isBeta: true,
+    });
+  }
+
+  // existing logic continues...
   const redisPro = await isProUser(req);
   const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
 
@@ -56,7 +70,6 @@ export async function GET(req: NextRequest) {
   const clientKey = getClientKey(req);
   const key = `limit:${today()}:${clientKey}`;
 
-  const redis = await getRedis();
   const raw = await redis.get(key);
   const count = raw ? Number(raw) : 0;
 
