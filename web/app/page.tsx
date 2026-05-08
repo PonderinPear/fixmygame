@@ -2852,6 +2852,7 @@ export default function Page() {
 >("idle");
   const [loadingLimit, setLoadingLimit] = useState(true);
   const [running, setRunning] = useState(false);
+  const [progressTick, setProgressTick] = useState(0);
   const [loadingDesktopLog, setLoadingDesktopLog] = useState(false);
   const [scanningLogs, setScanningLogs] = useState(false);
   const [detectingSystemSpecs, setDetectingSystemSpecs] = useState(false);
@@ -3026,6 +3027,33 @@ useEffect(() => {
   ]
 );
 
+useEffect(() => {
+  const isProgressActive =
+    loadingDesktopLog ||
+    scanningLogs ||
+    running ||
+    applyingSafeFix ||
+    undoingSafeFix ||
+    runningFixPlan;
+
+  if (!isProgressActive) {
+    setProgressTick(0);
+    return;
+  }
+
+  const interval = window.setInterval(() => {
+    setProgressTick((tick) => tick + 1);
+  }, 700);
+
+  return () => window.clearInterval(interval);
+}, [
+  loadingDesktopLog,
+  scanningLogs,
+  running,
+  applyingSafeFix,
+  undoingSafeFix,
+  runningFixPlan,
+]);
 
 const selectedGame = useMemo(
   () => GAME_PRESETS.find((g) => g.key === selectedGameKey) ?? SORTED_GAME_PRESETS[0],
@@ -6043,13 +6071,32 @@ onClick={() => {
     </div>
 
     <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
-      <div className="h-2 w-1/2 animate-pulse rounded-full bg-cyan-400" />
-    </div>
+  <div className="h-2 w-1/3 animate-[progressSlide_1.4s_ease-in-out_infinite] rounded-full bg-cyan-400" />
+</div>
+
+<style jsx>{`
+  @keyframes progressSlide {
+    0% {
+      transform: translateX(-100%);
+    }
+    50% {
+      transform: translateX(120%);
+    }
+    100% {
+      transform: translateX(320%);
+    }
+  }
+`}</style>
 
     <div className="mt-4 grid gap-2">
       {progressState.steps.map((step, index) => {
-        const isActive = index === progressState.activeStep;
-        const isDone = index < progressState.activeStep;
+  const animatedActiveStep =
+    progressState.steps.length > 0
+      ? progressTick % progressState.steps.length
+      : progressState.activeStep;
+
+  const isActive = index === animatedActiveStep;
+  const isDone = index < animatedActiveStep;
 
         return (
           <div
