@@ -1856,20 +1856,26 @@ function resolveDependencyState(params: {
 
 export async function POST(req: NextRequest) {
   try {
-    const redisPro = await isProUser(req);
-    const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
-    const isPro = redisPro || cookiePro;
+    const redis = await getRedis();
+const betaValue = await redis.get("beta:open");
+const isBetaOpen = String(betaValue) === "1";
 
-    let count = 0;
-    if (!isPro) {
-      count = await incrementAndGetCount(req);
-      if (count > DAILY_LIMIT) {
-        return jsonResponse(
-  { error: "Daily limit reached.", remaining: 0, isPro: false },
-  429
-);
-      }
-    }
+const redisPro = await isProUser(req);
+const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
+const isPro = redisPro || cookiePro;
+
+let count = 0;
+
+if (!isBetaOpen && !isPro) {
+  count = await incrementAndGetCount(req);
+
+  if (count > DAILY_LIMIT) {
+    return jsonResponse(
+      { error: "Daily limit reached.", remaining: 0, isPro: false, isBeta: false },
+      429
+    );
+  }
+}
 
     const body = await req.json();
     const {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
+import { isProUser } from "@/lib/pro";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,17 +49,34 @@ function getClientKey(req: NextRequest) {
   return `unknown:${crypto.randomUUID()}`;
 }
 
+async function isBetaOpen() {
+  const betaValue = await redis.get("beta:open");
+  return String(betaValue) === "1";
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const betaValue = await redis.get("beta:open");
-    const isBetaOpen = String(betaValue) === "1";
+    const betaOpen = await isBetaOpen();
 
-    if (isBetaOpen) {
+    if (betaOpen) {
       return jsonResponse({
         isPro: false,
         remaining: 999,
         limit: 999,
         isBeta: true,
+      });
+    }
+
+    const redisPro = await isProUser(req);
+    const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
+    const isPro = redisPro || cookiePro;
+
+    if (isPro) {
+      return jsonResponse({
+        isPro: true,
+        remaining: 999,
+        limit: 999,
+        isBeta: false,
       });
     }
 
