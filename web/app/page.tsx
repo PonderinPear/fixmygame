@@ -3534,10 +3534,14 @@ async function fetchBetaStatus() {
           ? "FixMyGame beta is active."
           : "The FixMyGame beta period has ended.")
     );
-  } catch {
-    setBetaOpen(false);
-    setBetaMessage("FixMyGame could not verify beta access right now.");
-  } finally {
+  } catch (error) {
+  setBetaOpen(false);
+  setBetaMessage(
+    error instanceof Error
+      ? `FixMyGame could not verify beta access: ${error.message}`
+      : "FixMyGame could not verify beta access right now."
+  );
+}finally {
     setCheckingBetaStatus(false);
   }
 }
@@ -5293,6 +5297,17 @@ if (!betaOpen) {
         <p className="mt-4 text-white/70">
           {betaMessage || "This beta build is currently unavailable."}
         </p>
+        <p className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/50 break-all">
+  API base: {API_BASE_URL}
+</p>
+
+<button
+  type="button"
+  onClick={fetchBetaStatus}
+  className="mt-4 rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/20"
+>
+  Recheck Beta Access
+</button>
       </div>
     </main>
   );

@@ -24,21 +24,31 @@ if (redisValue !== null) {
   }
 
   return NextResponse.json(
-    {
-      betaOpen,
-      redisValue,
-      redisReadError,
-      debug: "beta-status-v3-live-redis",
-      message: betaOpen
-        ? "FixMyGame beta is active."
-        : "The FixMyGame beta period has ended. Access is currently closed.",
+  {
+    betaOpen,
+    redisValue,
+    redisReadError,
+    debug: "beta-status-v3-live-redis",
+    message: betaOpen
+      ? "FixMyGame beta is active."
+      : "The FixMyGame beta period has ended. Access is currently closed.",
+  },
+  {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+      "Cache-Control": "no-store",
     },
-    {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
-      },
-    }
-  );
+  }
+);
+}
+export async function OPTIONS() {
+  return NextResponse.json({}, {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "*",
+    },
+  });
 }
