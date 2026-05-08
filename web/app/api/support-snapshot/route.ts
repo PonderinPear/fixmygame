@@ -1,7 +1,24 @@
 import { NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const redis = Redis.fromEnv();
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, x-fmg-device-id",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders,
+  });
+}
 
 export async function POST(req: Request) {
   try {
@@ -10,53 +27,51 @@ export async function POST(req: Request) {
     const consentEnabled = Boolean(body?.consent?.supportTelemetryEnabled);
 
     if (!consentEnabled) {
-      return NextResponse.json({ ok: true, skipped: true });
+      return NextResponse.json(
+        { ok: true, skipped: true },
+        { headers: corsHeaders }
+      );
     }
 
     const id = crypto.randomUUID();
 
     const snapshot = {
       id,
-
       routeVersion: "v2-diagnostic-mapping",
-      
-      // identity
+
       vid: body?.vid || "unknown",
       sessionId: body?.sessionId || "unknown_session",
 
-      // game info
       game: body?.game?.key || "unknown",
       gameTitle: body?.game?.title || "Unknown Game",
 
-      // event
       eventType: body?.eventType || "snapshot",
       eventDetail: body?.eventDetail || "",
 
-      // 🔥 THIS IS THE IMPORTANT FIX
       issue: body?.diagnostic?.analysis?.issue || "",
       cause: body?.diagnostic?.analysis?.mostLikelyCause || "",
       quickFix: body?.diagnostic?.analysis?.quickFixFirst || "",
 
-      // logs + mods
       logSnippet: String(body?.diagnostic?.crashLog || "").slice(0, 1200),
+
       suspectedMods:
         body?.diagnostic?.detectedSignals?.suspectedMods ||
         body?.diagnostic?.liveMods ||
         [],
 
-      // system + limits
       system: body?.system || {},
       limits: body?.limits || {},
 
       createdAt: Date.now(),
-
-      // full raw (for debugging later)
       raw: body,
     };
 
     await redis.set(`snapshot:${id}`, snapshot);
 
-    return NextResponse.json({ ok: true, id });
+    return NextResponse.json(
+      { ok: true, id },
+      { headers: corsHeaders }
+    );
   } catch (error) {
     console.error("SNAPSHOT SAVE ERROR:", error);
 
@@ -68,7 +83,10 @@ export async function POST(req: Request) {
             ? error.message
             : "Failed to save support snapshot.",
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: corsHeaders,
+      }
     );
   }
 }

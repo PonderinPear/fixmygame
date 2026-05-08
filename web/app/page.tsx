@@ -4810,7 +4810,7 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
     });
 
     const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
-  `${API_BASE_URL}/api/support-snapshot`,
+  "/api/support-snapshot",
   {
     method: "POST",
     body: JSON.stringify(snapshot),
@@ -4819,13 +4819,11 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
 
     console.log("Support snapshot sent:", response);
   } catch (error) {
-    console.error("Support snapshot failed:", error);
-    setErrorMsg(
-      error instanceof Error
-        ? `Support snapshot failed: ${error.message}`
-        : "Support snapshot failed."
-    );
-  }
+  console.error("Support snapshot failed:", error);
+
+  // Do not show telemetry failures to users.
+  // Diagnostics should still feel successful even if support logging fails.
+}
 }
 
   async function runDiagnostic(
@@ -5933,6 +5931,71 @@ onClick={() => {
     {errorMsg}
   </div>
 ) : null}
+{progressState ? (
+  <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+      IN PROGRESS
+    </div>
+
+    <div className="mt-2 text-lg font-semibold text-white">
+      {progressState.title}
+    </div>
+
+    <div className="mt-1 text-sm text-white/75">
+      {progressState.description}
+    </div>
+
+    <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
+  <div
+    className="h-2 rounded-full bg-cyan-400 transition-all duration-700 ease-out"
+    style={{ width: `${progressPercent}%` }}
+  />
+</div>
+
+<style jsx>{`
+  @keyframes progressSlide {
+    0% {
+      transform: translateX(-100%);
+    }
+    50% {
+      transform: translateX(120%);
+    }
+    100% {
+      transform: translateX(320%);
+    }
+  }
+`}</style>
+
+    <div className="mt-4 grid gap-2">
+      {progressState.steps.map((step, index) => {
+  const animatedActiveStep =
+    progressState.steps.length > 0
+      ? progressTick % progressState.steps.length
+      : progressState.activeStep;
+
+  const isActive = index === animatedActiveStep;
+  const isDone = false;
+
+        return (
+          <div
+            key={step}
+            className={[
+              "rounded-xl px-3 py-2 text-sm",
+              isActive
+                ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
+                : isDone
+                ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
+                : "border border-white/10 bg-white/5 text-white/60",
+            ].join(" ")}
+          >
+            {isDone ? "✓" : isActive ? "•" : "○"} {step}
+          </div>
+        );
+      })}
+    </div>
+  </div>
+) : null}
+
 {/* 🔥 FIX ASSISTANT */}
 <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
@@ -6074,71 +6137,6 @@ onClick={() => {
     {undoingSafeFix ? "Undoing..." : "Undo Last Fix"}
   </button>
 </div>
-  </div>
-) : null}
-
-{progressState ? (
-  <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
-      IN PROGRESS
-    </div>
-
-    <div className="mt-2 text-lg font-semibold text-white">
-      {progressState.title}
-    </div>
-
-    <div className="mt-1 text-sm text-white/75">
-      {progressState.description}
-    </div>
-
-    <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-white/10">
-  <div
-    className="h-2 rounded-full bg-cyan-400 transition-all duration-700 ease-out"
-    style={{ width: `${progressPercent}%` }}
-  />
-</div>
-
-<style jsx>{`
-  @keyframes progressSlide {
-    0% {
-      transform: translateX(-100%);
-    }
-    50% {
-      transform: translateX(120%);
-    }
-    100% {
-      transform: translateX(320%);
-    }
-  }
-`}</style>
-
-    <div className="mt-4 grid gap-2">
-      {progressState.steps.map((step, index) => {
-  const animatedActiveStep =
-    progressState.steps.length > 0
-      ? progressTick % progressState.steps.length
-      : progressState.activeStep;
-
-  const isActive = index === animatedActiveStep;
-  const isDone = false;
-
-        return (
-          <div
-            key={step}
-            className={[
-              "rounded-xl px-3 py-2 text-sm",
-              isActive
-                ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-100"
-                : isDone
-                ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
-                : "border border-white/10 bg-white/5 text-white/60",
-            ].join(" ")}
-          >
-            {isDone ? "✓" : isActive ? "•" : "○"} {step}
-          </div>
-        );
-      })}
-    </div>
   </div>
 ) : null}
         </div>
