@@ -2715,8 +2715,7 @@ const GAME_PROFILES: Record<
   },
 };
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:3001";
+const API_BASE_URL = "https://fixmygame.vercel.app";
 
   const SORTED_GAME_PRESETS = [
   ...GAME_PRESETS.filter((g) => g.key !== "custom").sort((a, b) =>
