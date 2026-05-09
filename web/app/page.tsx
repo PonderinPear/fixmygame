@@ -3779,6 +3779,13 @@ const missingModDownloadUrl = getMissingModDownloadUrl();
 const missingModAlreadyInstalled =
   Boolean(missingModRecovery?.found && missingModRecovery.alreadyInCorrectPlace);
 
+  const missingModWasFoundElsewhere =
+  Boolean(
+    missingModRecovery?.found &&
+      !missingModRecovery.alreadyInCorrectPlace &&
+      !missingModRecovery.justMovedToCorrectPlace
+  );
+
 const missingModRecoveryTarget = useMemo(() => {
   if (!displayAnalysis) return "";
 
@@ -4809,8 +4816,8 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
       eventDetail,
     });
 
-    const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
-  "/api/support-snapshot",
+  const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
+  `${API_BASE_URL}/api/support-snapshot`,
   {
     method: "POST",
     body: JSON.stringify(snapshot),
@@ -5221,6 +5228,11 @@ function openStepByStepGuide() {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
+
+  if (missingModAlreadyInstalled) {
+  setCurrentGuideStep(0);
+  setCompletedGuideSteps([]);
+}
 
   setShowFixGuide(true);
 }
@@ -6054,7 +6066,7 @@ onClick={() => {
     disabled={!hasDiagnosticResult || !fixPlan}
     className="w-full text-left text-white transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    🛠️ Safe Repair
+    {isMissingDependency ? "🧩 Dependency Repair" : "🛠️ Safe Repair"}
   </button>
 
   <p className="mt-2 ml-6 text-xs text-white/60">
@@ -6410,7 +6422,7 @@ setTimeout(() => {
       disabled={!hasDiagnosticResult || !fixPlan}
       className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      🛠️ Safe Repair
+      {isMissingDependency ? "🧩 Dependency Repair" : "🛠️ Safe Repair"}
     </button>
   </div>
 </div>
@@ -6421,43 +6433,64 @@ setTimeout(() => {
     </div>
 
     <h3 className="mt-3 text-2xl font-bold text-white">
-      Recover or reinstall {missingModRecoveryTarget}
-    </h3>
+  {missingModAlreadyInstalled
+    ? `${missingModRecoveryTarget} is already installed`
+    : `Recover or reinstall ${missingModRecoveryTarget}`}
+</h3>
 
-    <p className="mt-2 text-sm text-white/70">
-      FixMyGame can look for this mod on your device. If it finds the mod in the wrong place,
-      it can move it back into your game’s Mods folder. If it is not found locally, you can open
-      the download page directly.
-    </p>
+<p className="mt-2 text-sm text-white/70">
+  {missingModAlreadyInstalled
+    ? "FixMyGame found this mod in the correct Mods folder. This usually means the log is old or the mod was restored after the log was created."
+    : "FixMyGame can look for this mod on your device. If it finds the mod in the wrong place, it can move it back into your game’s Mods folder. If it is not found locally, you can open the download page directly."}
+</p>
 
     <div className="mt-5 flex flex-wrap gap-3">
-      <button
-        type="button"
-        onClick={searchForMissingModOnDevice}
-        disabled={searchingMissingMod}
-        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {searchingMissingMod ? "Searching This PC..." : "Search This PC"}
-      </button>
+  <button
+    type="button"
+    onClick={searchForMissingModOnDevice}
+    disabled={searchingMissingMod || missingModAlreadyInstalled}
+    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    {missingModAlreadyInstalled
+      ? "Already Found"
+      : searchingMissingMod
+      ? "Searching This PC..."
+      : "Search This PC"}
+  </button>
 
-      <button
-        type="button"
-        onClick={moveFoundModIntoModsFolder}
-        disabled={!missingModRecovery?.found || movingMissingMod}
-        className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-emerald-200 transition hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {movingMissingMod ? "Moving Mod..." : "Move to Mods Folder"}
-      </button>
+  <button
+    type="button"
+    onClick={moveFoundModIntoModsFolder}
+    disabled={!missingModWasFoundElsewhere || movingMissingMod}
+    className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-emerald-200 transition hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    {missingModAlreadyInstalled
+      ? "Already in Mods Folder"
+      : movingMissingMod
+      ? "Moving Mod..."
+      : "Move to Mods Folder"}
+  </button>
 
-      <button
-        type="button"
-        onClick={openMissingModDownloadPage}
-        disabled={!missingModDownloadUrl}
-        className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        Download Missing Mod
-      </button>
-    </div>
+  <button
+    type="button"
+    onClick={openMissingModDownloadPage}
+    disabled={!missingModDownloadUrl || missingModAlreadyInstalled}
+    className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+  >
+    {missingModAlreadyInstalled ? "Download Not Needed" : "Download Missing Mod"}
+  </button>
+
+  {missingModAlreadyInstalled ? (
+    <button
+      type="button"
+      onClick={() => runDiagnostic()}
+      disabled={!canRun || running}
+      className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {running ? "Running..." : "Run Fresh Diagnostic"}
+    </button>
+  ) : null}
+</div>
 
     <div className="mt-5 grid gap-3">
       <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -6689,7 +6722,7 @@ setTimeout(() => {
   )}
 </div>
 
-     <div className="mt-3 flex flex-wrap gap-2">
+<div className="mt-3 flex flex-wrap gap-2">
 
   <button
   type="button"
@@ -7212,7 +7245,9 @@ setTimeout(() => {
         NEXT STEP
       </div>
       <div className="mt-2 text-lg font-semibold text-white">
-        Download the missing mod.
+        {missingModAlreadyInstalled
+  ? "Use a fresh log."
+  : "Download the missing mod."}
       </div>
       <div className="mt-2 text-sm text-white/70">
         FixMyGame will open the download page. Nothing will be moved or quarantined.
