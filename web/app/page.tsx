@@ -3009,8 +3009,8 @@ useEffect(() => {
 }, [selectedGameKey, gpuModel, driverVersion, graphicsApiMode]);
 
   const canRun = useMemo(
-  () => isPro || isBetaAccess || remaining > 0,
-  [isPro, isBetaAccess, remaining]
+  () => isPro || betaOpen || isBetaAccess || remaining > 0,
+  [isPro, betaOpen, isBetaAccess, remaining]
 );
   const progressState = useMemo(
   () =>
@@ -3901,9 +3901,9 @@ setDebugProStatus("debug skipped during beta");
     } catch {
       if (cancelled) return;
       setIsPro(false);
-      setIsBetaAccess(false);
-      setLimit(3);
-      setRemaining(3);
+      setIsBetaAccess(betaOpen);
+      setLimit(betaOpen ? 999 : 3);
+      setRemaining(betaOpen ? 999 : 3);
       setDebugProStatus("debug-pro temporarily unavailable");
     } finally {
       if (!cancelled) setLoadingLimit(false);
@@ -4844,8 +4844,23 @@ if (typeof logToUse !== "string" || !logToUse.trim()) {
   return;
 }
 
-if (!betaOpen) {
-  setErrorMsg(betaMessage || "The FixMyGame beta period has ended.");
+const freshBeta = await fetchJSON<{ betaOpen: boolean; message?: string }>(
+  `${API_BASE_URL}/api/beta-status?t=${Date.now()}`,
+  {
+    method: "GET",
+    cache: "no-store",
+  }
+);
+
+setBetaOpen(Boolean(freshBeta.betaOpen));
+setBetaMessage(freshBeta.message || "");
+
+if (!freshBeta.betaOpen) {
+  setRunning(false);
+  setErrorMsg(
+    freshBeta.message ||
+      "The FixMyGame beta period has ended. Access is currently closed."
+  );
   return;
 }
 
@@ -5422,7 +5437,7 @@ return (
   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
     {loadingLimit
       ? "Checking usage..."
-      : isPro || isBetaAccess
+      : isPro || betaOpen || isBetaAccess
       ? "Unlimited beta access enabled"
       : `${remaining}/${limit} diagnostics left today`}
   </span>
@@ -5550,7 +5565,7 @@ return (
   disabled={scanningLogs || !selectedGameProfile.supportsAutoDetect}
   className={[
     "rounded-xl px-4 py-2 font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-    isPro || isBetaAccess
+    isPro || betaOpen ||isBetaAccess
       ? "bg-cyan-600 hover:bg-cyan-500"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
@@ -5558,7 +5573,7 @@ return (
   {scanningLogs
   ? "Scanning..."
   : selectedGameProfile.supportsAutoDetect
-  ? isPro || isBetaAccess
+  ? isPro || betaOpen || isBetaAccess
     ? `Auto Detect ${gameTitle} Logs`
     : `Auto Detect ${gameTitle} Logs (Pro)`
     : `Auto Detect ${gameTitle} Logs Not Available Yet`}
@@ -5576,12 +5591,12 @@ onClick={() => {
 }}
   className={[
     "rounded-xl px-4 py-2 font-medium transition",
-    isPro || isBetaAccess
+    isPro || betaOpen || isBetaAccess
       ? "bg-white/10 hover:bg-white/15"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
 >
-  {isPro || isBetaAccess ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
+  {isPro || betaOpen || isBetaAccess ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
 </button>
 </div>
 
@@ -6325,12 +6340,12 @@ setTimeout(() => {
   }}
   className={[
     "rounded-lg px-3 py-1.5 text-sm transition",
-    isPro || isBetaAccess
+    isPro || betaOpen || isBetaAccess
       ? "border border-white/10 bg-white/5 text-white/80 hover:bg-white/10 hover:text-white"
       : "border border-amber-400/20 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15",
   ].join(" ")}
 >
-    {isPro || isBetaAccess ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
+    {isPro || betaOpen || isBetaAccess ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
 </button>
 
   <button
