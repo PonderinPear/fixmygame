@@ -880,7 +880,7 @@ function normalizeNameForMatch(value) {
   return String(value || "")
     .toLowerCase()
     .replace(/\.[a-z0-9]+$/i, "")
-    .replace(/[_\-\s]+/g, "")
+    .replace(/[^a-z0-9]+/g, "")
     .trim();
 }
 
@@ -1562,10 +1562,20 @@ ipcMain.handle("apply-safe-fix", async (_event, payload) => {
     }
 
 const candidate = findSafeFixCandidate(modsFolder, suspectMods);
+
 if (!candidate) {
+  const availableItems = fs
+    .readdirSync(modsFolder, { withFileTypes: true })
+    .map((entry) => entry.name)
+    .slice(0, 30);
+
   return {
     ok: false,
-    error: "No matching safe-fix candidate was found in the Mods folder.",
+    error:
+      `No matching safe-fix candidate was found in the Mods folder.\n\n` +
+      `Mods folder checked: ${modsFolder}\n` +
+      `Suspects checked: ${suspectMods.join(", ") || "none"}\n` +
+      `Items found: ${availableItems.join(", ") || "none"}`,
   };
 }
 

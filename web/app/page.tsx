@@ -232,6 +232,14 @@ type FixHistoryItem = {
   };
 };
 
+type RepairTimelineItem = {
+  id: string;
+  time: number;
+  title: string;
+  detail: string;
+  status: "info" | "success" | "warning" | "failed";
+};
+
 type ApiErrorShape = {
   error?: string;
   message?: string;
@@ -367,7 +375,8 @@ function getFixPlan(
     supportsAutoDetect: boolean;
     supportsModsFolder: boolean;
     supportsLogsFolder: boolean;
-  }
+  },
+  missingModAlreadyInstalled?: boolean
 ): FixPlan | null {
   if (!analysis) return null;
 
@@ -412,7 +421,7 @@ function getFixPlan(
   return {
     title:
       category === "missing_dependency"
-        ? "Missing dependency repair preview"
+        ? "Repair preview"
         : category === "mixin_failure"
         ? "Mixin failure repair preview"
         : category === "java_mismatch"
@@ -422,15 +431,25 @@ function getFixPlan(
         : category === "mod_conflict"
         ? "Safe repair preview"
         : "Repair preview",
-    description: getFixPlanDescription(category),
+    description: getFixPlanDescription(
+  category,
+  missingModAlreadyInstalled
+),
     actions,
   };
 }
 
-function getFixPlanDescription(category: string) {
+function getFixPlanDescription(
+  category: string,
+  missingModAlreadyInstalled?: boolean
+) {
   if (category === "missing_dependency") {
-    return "FixMyGame found a missing required mod or dependency. Use the download button to open the correct mod page, then install it into your Mods folder.";
+  if (missingModAlreadyInstalled) {
+    return "FixMyGame found the dependency in your Mods folder. This usually means the loaded log is old, or the mod was restored after the log was created.";
   }
+
+  return "FixMyGame found a missing required mod or dependency. Use the download button to open the correct mod page, then install it into your Mods folder.";
+}
 
   if (category === "mod_conflict") {
     return "Backs up and quarantines the likely problem mod.";
@@ -2889,6 +2908,7 @@ export default function Page() {
   const [desktopConnected, setDesktopConnected] = useState(false);
   const [applyingSafeFix, setApplyingSafeFix] = useState(false);
   const [undoingSafeFix, setUndoingSafeFix] = useState(false);
+  const [lastUndoSucceeded, setLastUndoSucceeded] = useState(false);
   const [proModalContext, setProModalContext] = useState<"autoDetect" | "folderScan" | "saveAnalysis">("autoDetect");
   const [detectedLogs, setDetectedLogs] = useState<
   { name: string; fullPath: string; lastModified?: number; size?: number }[]
@@ -2907,6 +2927,7 @@ export default function Page() {
   const [debugVid, setDebugVid] = useState("");
   const [debugProStatus, setDebugProStatus] = useState("");
   const [fixExecutionResults, setFixExecutionResults] = useState<FixExecutionResult[]>([]);
+  const [repairTimeline, setRepairTimeline] = useState<RepairTimelineItem[]>([]);
   const [runningFixPlan, setRunningFixPlan] = useState(false);
   const [fixHistoryItems, setFixHistoryItems] = useState<FixHistoryItem[]>([]);
   const [logHighlights, setLogHighlights] = useState<string[]>([]);
@@ -2934,6 +2955,10 @@ export default function Page() {
   mods?: string[];
 } | null>(null);
 const diagnosticResultRef = useRef<HTMLElement | null>(null);
+const fixResultsRef = useRef<HTMLDivElement | null>(null);
+const fixAssistantScrollRef = useRef<HTMLDivElement | null>(null);
+const continueResultRef = useRef<HTMLDivElement | null>(null);
+const diagnosticBottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
   fetchBetaStatus();
@@ -2964,6 +2989,12 @@ useEffect(() => {
     // ignore storage errors
   }
 }, [appSettings]);
+
+useEffect(() => {
+  if (showDiagnosticRefineBox && diagnosticRefineMode === "still_crashing") {
+    scrollToContinueFromResult();
+  }
+}, [showDiagnosticRefineBox, diagnosticRefineMode]);
 
   useEffect(() => {
   try {
@@ -3167,6 +3198,7 @@ function resetLiveSessionState() {
   setActionMsgLocation(null);
 
   setFixExecutionResults([]);
+  setRepairTimeline([]);
   setLastFixResult(null);
   setShowFixFeedback(false);
 
@@ -3517,6 +3549,10 @@ suspectedMods:
   setShowDiagnosticRefineBox(true);
   setDiagnosticRefineText("");
   resetResultFollowupMessage();
+
+ if (mode !== "still_crashing") {
+  scrollToFixResultsArea();
+}
 }
 
 function showResultFollowupMessage(
@@ -3819,6 +3855,58 @@ const shouldShowMissingModRecovery =
   Boolean(missingModRecoveryTarget) &&
   displayAnalysis?.detectedSignals?.likelyCategory !== "game_files_corrupt";
 
+  const effectiveDisplayAnalysis =
+  missingModAlreadyInstalled && missingModRecoveryTarget && displayAnalysis
+    ? {
+        ...displayAnalysis,
+        quickFixFirst: `${missingModRecoveryTarget} is already installed. Use a fresh log.`,
+        issue: `FixMyGame found ${missingModRecoveryTarget} in the correct Mods folder. The loaded log may be old, or the mod was restored after the log was created.`,
+        mostLikelyCause: `${missingModRecoveryTarget} is already in the correct Mods folder. The loaded log may be old, or the mod was restored after the log was created.`,
+        probabilityBreakdown: [
+          `100% - ${missingModRecoveryTarget} is already installed; fresh log needed`,
+        ],
+        recommendedFixSteps: [
+          `Launch ${gameTitle} again so it creates a fresh log.`,
+          "If the game still fails, load the newest log created after that launch.",
+          "Run FixMyGame again with the fresh log.",
+        ],
+        needMoreInfo:
+          "No more info is needed unless the game still fails after launching again with a fresh log.",
+      }
+    : displayAnalysis;
+
+  const effectiveGuideQuickFix =
+  missingModAlreadyInstalled && missingModRecoveryTarget
+    ? `${missingModRecoveryTarget} is already installed. Use a fresh log.`
+    : displayAnalysis?.quickFixFirst || "";
+
+const effectiveGuideSteps =
+  missingModAlreadyInstalled && missingModRecoveryTarget
+    ? [
+        `Launch ${gameTitle} again so it creates a fresh log.`,
+        "If the game still fails, load the newest log created after that launch.",
+        "Run FixMyGame again with the fresh log.",
+      ]
+    : displayAnalysis?.recommendedFixSteps || [];
+
+const effectiveGuideCause =
+  missingModAlreadyInstalled && missingModRecoveryTarget
+    ? `${missingModRecoveryTarget} is already in the correct Mods folder. The loaded log may be old, or the mod was restored after the log was created.`
+    : displayAnalysis?.mostLikelyCause || "";
+
+const effectiveSmartFixPath =
+  missingModAlreadyInstalled && missingModRecoveryTarget
+    ? {
+        title: "Dependency already installed",
+        bullets: [
+          `${missingModRecoveryTarget} is already in the correct Mods folder.`,
+          "Launch Stardew Valley again so SMAPI creates a fresh log.",
+          "If the game still fails, load the newest log created after that launch.",
+          "Run FixMyGame again with the fresh log.",
+        ],
+      }
+    : smartFixPath;
+
 useEffect(() => {
   if (!shouldShowMissingModRecovery) {
     setMissingModRecovery(null);
@@ -4044,6 +4132,58 @@ function buildSafeFixPlanPreview(params: {
 ];
 }
 
+function scrollToFixResultsArea() {
+  setTimeout(() => {
+    const target = fixResultsRef.current;
+    if (!target) return;
+
+    const y =
+      target.getBoundingClientRect().top +
+      window.scrollY -
+      540;
+
+    window.scrollTo({
+      top: y,
+      behavior: "smooth",
+    });
+  }, 150);
+}
+
+function scrollToContinueFromResult() {
+  setTimeout(() => {
+    diagnosticBottomRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  }, 250);
+
+  setTimeout(() => {
+    diagnosticBottomRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  }, 600);
+}
+
+function addRepairTimelineItem(
+  title: string,
+  detail: string,
+  status: RepairTimelineItem["status"] = "info"
+) {
+  setRepairTimeline((prev) =>
+    [
+      {
+        id: crypto.randomUUID(),
+        time: Date.now(),
+        title,
+        detail,
+        status,
+      },
+      ...prev,
+    ].slice(0, 12)
+  );
+}
+
   async function applySafeFixNow() {
   setErrorMsg("");
   setFixPreviewError("");
@@ -4088,19 +4228,28 @@ if (safeFixCategory !== "mod_conflict") {
       actionLabel: "safe_fix_quarantine_mod",
     });
 
-    if (!response?.ok) {
-  const detail = response?.error || "Safe Fix failed.";
+  if (!response?.ok) {
+  const detail = response?.error || "Safe Repair failed.";
 
   setFixExecutionResults([
     {
       id: "safe_fix_failed",
-      title: "Safe Fix failed",
+      title: "Safe Repair failed",
       ok: false,
       detail,
     },
   ]);
 
-  setFixPreviewError(detail);
+  addRepairTimelineItem(
+  "Safe Repair failed",
+  detail,
+  "failed"
+);
+
+  setShowFixPreviewModal(false);
+
+  scrollToFixResultsArea();
+
   return;
 }
 
@@ -4179,12 +4328,18 @@ showActionMessage(
   mods: suspectMods,
 });
     setShowFixFeedback(true);
+    scrollToFixResultsArea();
     pushSupportEvent("apply_safe_fix", `Applied safe fix for ${movedFile}`);
 await sendSupportSnapshot(
   "apply_safe_fix",
   `Applied safe fix for ${movedFile}`
 );
-
+addRepairTimelineItem(
+  "Safe Repair applied",
+  `${movedFile} was backed up and moved to quarantine.`,
+  "success"
+);
+setLastUndoSucceeded(false);
     await detectSelectedGameInstall(selectedGameKey);
   } catch (error) {
     setFixPreviewError(
@@ -4226,6 +4381,11 @@ await sendSupportSnapshot(
       detail,
     },
   ]);
+  addRepairTimelineItem(
+  isNoUndoCase ? "Nothing to undo" : "Undo failed",
+  detail,
+  isNoUndoCase ? "warning" : "failed"
+);
 
   if (!isNoUndoCase) {
     setErrorMsg(detail);
@@ -4255,10 +4415,19 @@ setFixExecutionResults([
   },
 ]);
 
+addRepairTimelineItem(
+  "Undo completed",
+  `${restoredFile} was restored to its original folder.`,
+  "success"
+);
+
+setLastUndoSucceeded(true);
+
 showActionMessage(
   `Undo complete: restored ${restoredFile}. You can launch the game again or run another diagnostic if needed.`,
   "fixAssistant"
 );
+
 
     const historyText = [
       `Undo Last Fix completed.`,
@@ -4931,6 +5100,11 @@ const nextDetectedSignals = data.detectedSignals ?? null;
 
 setResult(nextResult);
 setHasRunDiagnosticThisSession(true);
+addRepairTimelineItem(
+  "Diagnostic completed",
+  `${gameTitle} analysis finished.`,
+  "success"
+);
 setShouldAutoScrollToResult(autoScroll);
 setAnalysis(nextAnalysis);
 setDetectedSignals(nextDetectedSignals);
@@ -5037,7 +5211,7 @@ async function saveResult() {
     return;
   }
 
-  const textToSave = buildDiagnosticResultText(displayAnalysis, result);
+  const textToSave = buildDiagnosticResultText(effectiveDisplayAnalysis, result);
 
   if (!textToSave.trim()) return;
 
@@ -5063,7 +5237,7 @@ setTimeout(() => {
 }
 
 async function copyResult() {
-  const textToCopy = buildDiagnosticResultText(displayAnalysis, result);
+  const textToCopy = buildDiagnosticResultText(effectiveDisplayAnalysis, result);
 
   if (!textToCopy.trim()) return;
 
@@ -5103,16 +5277,16 @@ function resetSavedSystemPrefs() {
 }
 
 async function applyQuickFix() {
-  if (!displayAnalysis) {
+  if (!effectiveDisplayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
 
   const quickFixText = [
-    `Quick Fix First: ${displayAnalysis.quickFixFirst}`,
+    `Quick Fix First: ${effectiveDisplayAnalysis.quickFixFirst}`,
     "",
     "Recommended Fix Steps:",
-    ...displayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
+    ...effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
   ].join("\n");
 
   addToFixHistory("quick_fix", `${gameTitle} quick fix`, quickFixText);
@@ -5131,7 +5305,7 @@ async function applyQuickFix() {
   }
 }
 async function runFixPlan() {
-  if (!fixPlan || !displayAnalysis) {
+  if (!fixPlan || !effectiveDisplayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
@@ -5187,10 +5361,10 @@ async function runFixPlan() {
 
     if (action.type === "copy_fix_steps") {
       const quickFixText = [
-        `Quick Fix First: ${displayAnalysis.quickFixFirst}`,
+        `Quick Fix First: ${effectiveDisplayAnalysis.quickFixFirst}`,
         "",
         "Recommended Fix Steps:",
-        ...displayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
+        ...effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
       ].join("\n");
 
       try {
@@ -5217,6 +5391,8 @@ async function runFixPlan() {
   setRunningFixPlan(false);
   setShowFixPreviewModal(false);
 
+scrollToFixResultsArea();
+
   const successCount = results.filter((r) => r.ok).length;
   const totalCount = results.length;
 
@@ -5224,7 +5400,7 @@ async function runFixPlan() {
 }
 
 function openStepByStepGuide() {
-  if (!displayAnalysis) {
+  if (!effectiveDisplayAnalysis) {
     setErrorMsg("Run a diagnostic first.");
     return;
   }
@@ -6023,6 +6199,8 @@ onClick={() => {
   </div>
 ) : null}
 
+<div ref={fixAssistantScrollRef} className="scroll-mt-6" />
+
 {/* 🔥 FIX ASSISTANT */}
 <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
@@ -6066,7 +6244,7 @@ onClick={() => {
     disabled={!hasDiagnosticResult || !fixPlan}
     className="w-full text-left text-white transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    {isMissingDependency ? "🧩 Dependency Repair" : "🛠️ Safe Repair"}
+    {isMissingDependency ? "🧩 Repair Preview" : "🛠️ Safe Repair"}
   </button>
 
   <p className="mt-2 ml-6 text-xs text-white/60">
@@ -6104,9 +6282,70 @@ onClick={() => {
     FixMyGame can explain the fix, guide you through it, or safely handle supported fixes for you.
   </div>
 </div>
+<div ref={fixResultsRef} className="scroll-mt-6" />
+{repairTimeline.length > 0 ? (
+  <details className="group mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+    <summary className="cursor-pointer list-none flex items-center justify-between gap-3">
+  <div className="flex items-center gap-2 text-xs font-semibold tracking-widest text-cyan-200/80">
+    <span className="text-white/80 transition-transform duration-200 group-open:rotate-180">
+      ▼
+    </span>
+    REPAIR SESSION TIMELINE
+  </div>
+
+  <button
+    type="button"
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setRepairTimeline([]);
+    }}
+    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/10 hover:text-white"
+  >
+    Clear
+  </button>
+</summary>
+
+    <div className="mt-4 grid gap-2">
+      {repairTimeline.map((item) => (
+        <div
+          key={item.id}
+          className="rounded-xl border border-white/10 bg-black/20 px-3 py-3"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-medium text-white">{item.title}</div>
+
+            <span
+              className={[
+                "rounded-full px-2.5 py-1 text-xs font-semibold",
+                item.status === "success"
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : item.status === "failed"
+                  ? "bg-red-500/20 text-red-300"
+                  : item.status === "warning"
+                  ? "bg-amber-500/20 text-amber-300"
+                  : "bg-cyan-500/20 text-cyan-300",
+              ].join(" ")}
+            >
+              {new Date(item.time).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+
+          <div className="mt-2 text-sm text-white/70">{item.detail}</div>
+        </div>
+      ))}
+    </div>
+  </details>
+) : null}
 
 {fixExecutionResults.length > 0 ? (
-  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+  <div
+    ref={fixResultsRef}
+    className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4"
+  >
     <div className="text-xs font-semibold tracking-widest text-white/60">
       FIX RESULTS
     </div>
@@ -6163,6 +6402,21 @@ onClick={() => {
   >
     {undoingSafeFix ? "Undoing..." : "Undo Last Fix"}
   </button>
+  {lastUndoSucceeded ? (
+  <button
+    type="button"
+    onClick={() => {
+      setShowFixPreviewModal(true);
+    }}
+    disabled={
+      applyingSafeFix ||
+      !canApplySafeFix
+    }
+    className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+  >
+    {applyingSafeFix ? "Repairing..." : "Redo Safe Repair"}
+  </button>
+) : null}
 </div>
   </div>
 ) : null}
@@ -6233,11 +6487,11 @@ onClick={() => {
     <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
 <div className="flex items-center gap-2 text-lg font-semibold text-white">
   <span className="h-2 w-2 rounded-full bg-cyan-300" />
-  {smartFixPath.title}
+  {effectiveSmartFixPath.title}
 </div>
 
       <ul className="mt-4 grid gap-2">
-        {smartFixPath.bullets.map((bullet) => (
+        {effectiveSmartFixPath.bullets.map((bullet) => (
           <li
             key={bullet}
             className="rounded-xl bg-black/20 px-3 py-3 text-white/90"
@@ -6331,7 +6585,7 @@ setTimeout(() => {
 ) : null}
 
 <section ref={diagnosticResultRef} className="mt-6">
-  {hasRunDiagnosticThisSession && displayAnalysis ? (
+  {hasRunDiagnosticThisSession && effectiveDisplayAnalysis ? (
     <div className="rounded-2xl border border-white/10 bg-[rgba(10,22,48,0.55)] p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-semibold tracking-widest text-white/70">
@@ -6377,10 +6631,10 @@ setTimeout(() => {
           </div>
 <div className="mt-2 text-lg font-semibold text-white tracking-wide flex items-center gap-2">
   <span className="text-yellow-300">⚡</span>
-  {displayAnalysis.quickFixFirst}
+  {effectiveDisplayAnalysis?.quickFixFirst}
 </div>
         </div>
-
+        <div className="scroll-mt-4" />
         <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
     FIX ASSISTANT
@@ -6422,14 +6676,14 @@ setTimeout(() => {
       disabled={!hasDiagnosticResult || !fixPlan}
       className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {isMissingDependency ? "🧩 Dependency Repair" : "🛠️ Safe Repair"}
+      {isMissingDependency ? "🧩 Repair Preview" : "🛠️ Safe Repair"}
     </button>
   </div>
 </div>
 {shouldShowMissingModRecovery ? (
   <section className="mt-3 rounded-3xl border border-white/10 bg-[#071224] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
     <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/80">
-      Missing Mod Recovery
+      Repair Preview
     </div>
 
     <h3 className="mt-3 text-2xl font-bold text-white">
@@ -6563,7 +6817,7 @@ setTimeout(() => {
             <div className="text-xs font-semibold tracking-widest text-white/60">
               ISSUE
             </div>
-            <div className="mt-2 text-white">{displayAnalysis.issue}</div>
+            <div className="mt-2 text-white">{effectiveDisplayAnalysis.issue}</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -6573,14 +6827,14 @@ setTimeout(() => {
 <div
   className={[
     "mt-2 inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold",
-    displayAnalysis.confidenceLevel === "High"
+    effectiveDisplayAnalysis.confidenceLevel === "High"
       ? "bg-green-500/20 text-green-300"
-      : displayAnalysis.confidenceLevel === "Medium"
+      : effectiveDisplayAnalysis.confidenceLevel === "Medium"
       ? "bg-yellow-500/20 text-yellow-300"
       : "bg-red-500/20 text-red-300",
   ].join(" ")}
 >
-  {displayAnalysis.confidenceLevel}
+  {effectiveDisplayAnalysis.confidenceLevel}
 </div>          </div>
         </div>
 
@@ -6589,7 +6843,7 @@ setTimeout(() => {
             PROBABILITY BREAKDOWN
           </div>
           <ul className="mt-3 grid gap-2 text-white/90">
-            {displayAnalysis.probabilityBreakdown.map((item, index) => {
+            {effectiveDisplayAnalysis.probabilityBreakdown.map((item, index) => {
   const formatted = formatProbabilityItem(item, index);
 
   return (
@@ -6616,7 +6870,7 @@ setTimeout(() => {
           <div className="text-xs font-semibold tracking-widest text-white/60">
             MOST LIKELY CAUSE
           </div>
-          <div className="mt-2 text-white">{displayAnalysis.mostLikelyCause}</div>
+          <div className="mt-2 text-white">{effectiveDisplayAnalysis.mostLikelyCause}</div>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -6624,7 +6878,7 @@ setTimeout(() => {
             RECOMMENDED FIX STEPS
           </div>
           <ol className="mt-3 grid gap-2 text-white/90">
-            {displayAnalysis.recommendedFixSteps.map((step, index) => (
+            {effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => (
               <li key={`${index}-${step}`} className="rounded-xl bg-white/5 px-3 py-2">
                 <span className="mr-2 font-semibold text-white">{index + 1}.</span>
                 {step}
@@ -6637,7 +6891,7 @@ setTimeout(() => {
           <div className="text-xs font-semibold tracking-widest text-white/60">
             NEED MORE INFO
           </div>
-          <div className="mt-2 text-white/90">{displayAnalysis.needMoreInfo}</div>
+          <div className="mt-2 text-white/90">{effectiveDisplayAnalysis.needMoreInfo}</div>
         </div>
 
         <details className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -6648,7 +6902,10 @@ setTimeout(() => {
             {result}
           </pre>
         </details>
-        <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
+        <div
+  ref={continueResultRef}
+  className="scroll-mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4"
+>
   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
     CONTINUE FROM THIS RESULT
   </div>
@@ -6807,6 +7064,7 @@ setTimeout(() => {
     If you test a fix and want FixMyGame to stay aware of this issue on your next diagnostic,
     continue from this result before loading a newer crash log.
   </p>
+  <div ref={diagnosticBottomRef} className="h-1" />
 </div>
   </div>
   ) : (
@@ -7089,12 +7347,12 @@ setTimeout(() => {
             START HERE
           </div>
           <div className="mt-2 text-lg font-semibold text-white">
-            {displayAnalysis.quickFixFirst}
+            {effectiveGuideQuickFix}
           </div>
         </div>
 
         <div className="mt-5 grid gap-3">
-          {displayAnalysis.recommendedFixSteps.map((step, index) => {
+          {effectiveGuideSteps.map((step, index) => {
             const isCurrent = index === currentGuideStep;
             const isDone = completedGuideSteps.includes(index);
 
@@ -7133,15 +7391,15 @@ setTimeout(() => {
             MOST LIKELY CAUSE
           </div>
           <div className="mt-2 text-white">
-            {displayAnalysis.mostLikelyCause}
+            {effectiveGuideCause}
           </div>
         </div>
       </div>
 
       <div className="border-t border-white/10 p-4">
   <div className="mb-3 text-sm text-white/60">
-    Step {Math.min(currentGuideStep + 1, displayAnalysis.recommendedFixSteps.length)} of{" "}
-    {displayAnalysis.recommendedFixSteps.length}
+    Step {Math.min(currentGuideStep + 1, effectiveGuideSteps.length)} of{" "}
+    {effectiveGuideSteps.length}
   </div>
 
   <div className="flex flex-wrap justify-between gap-3">
@@ -7168,12 +7426,28 @@ setTimeout(() => {
 
     <div className="flex flex-wrap gap-3">
       <button
-        type="button"
-        onClick={applyQuickFix}
-        className="rounded-xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-100 transition hover:bg-cyan-400/20"
-      >
-        Copy Steps
-      </button>
+  type="button"
+  onClick={async () => {
+    const guideText = [
+      `Quick Fix First: ${effectiveGuideQuickFix}`,
+      "",
+      "Recommended Fix Steps:",
+      ...effectiveGuideSteps.map((step, index) => `${index + 1}. ${step}`),
+      "",
+      `Most Likely Cause: ${effectiveGuideCause}`,
+    ].join("\n");
+
+    try {
+      await copyTextReliable(guideText);
+      showActionMessage("Guide steps copied to clipboard.", "fixAssistant");
+    } catch {
+      setErrorMsg("Failed to copy guide steps.");
+    }
+  }}
+  className="rounded-xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-2 font-semibold text-cyan-100 transition hover:bg-cyan-400/20"
+>
+  Copy Steps
+</button>
 
       <button
         type="button"
@@ -7200,7 +7474,7 @@ setTimeout(() => {
           });
 
           setCurrentGuideStep((prev) =>
-            Math.min(prev + 1, displayAnalysis.recommendedFixSteps.length - 1)
+            Math.min(prev + 1, effectiveGuideSteps.length - 1)
           );
         }}
         className="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 transition hover:bg-cyan-300"
@@ -7245,13 +7519,16 @@ setTimeout(() => {
         NEXT STEP
       </div>
       <div className="mt-2 text-lg font-semibold text-white">
-        {missingModAlreadyInstalled
-  ? "Use a fresh log."
-  : "Download the missing mod."}
-      </div>
-      <div className="mt-2 text-sm text-white/70">
-        FixMyGame will open the download page. Nothing will be moved or quarantined.
-      </div>
+  {missingModAlreadyInstalled
+    ? "Dependency already installed"
+    : "Download the missing mod."}
+</div>
+
+<div className="mt-2 text-sm text-white/70">
+  {missingModAlreadyInstalled
+    ? "The required mod is already in the correct Mods folder. Relaunch the game and run a fresh diagnostic if the issue continues."
+    : "FixMyGame will open the download page. Nothing will be moved or quarantined."}
+</div>
     </div>
   ) : activeSafeFixCategory === "mod_conflict" ? (
     <>
@@ -7435,16 +7712,20 @@ setTimeout(() => {
       <button
   onClick={async () => {
   setShowFixFeedback(false);
-  pushSupportEvent("still_crashing_after_fix", "User said the issue is still happening after safe fix");
-  await sendSupportSnapshot(
+
+  pushSupportEvent(
     "still_crashing_after_fix",
-    "User said the issue is still happening after safe fix"
+    "User said the issue is still happening after safe repair"
   );
 
-  setTimeout(() => {
-    const el = document.getElementById("run-diagnostic-button");
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, 300);
+  await sendSupportSnapshot(
+    "still_crashing_after_fix",
+    "User said the issue is still happening after safe repair"
+  );
+
+  startResultRefinement("still_crashing");
+
+  setShowAdditionalRefineLogBox(true);
 }}
   className="flex-1 rounded-xl bg-red-500/20 px-3 py-2 font-medium text-red-200 hover:bg-red-500/30"
 >
