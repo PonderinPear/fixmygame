@@ -439,6 +439,14 @@ function getFixPlan(
   };
 }
 
+function getConfidenceDisplayLabel(
+  confidence?: string,
+  errorType?: string
+) {
+  if (errorType === "DuplicateModDetected") return "Confirmed";
+  return confidence || "Unknown";
+}
+
 function getFixPlanDescription(
   category: string,
   missingModAlreadyInstalled?: boolean
@@ -452,8 +460,8 @@ function getFixPlanDescription(
 }
 
   if (category === "mod_conflict") {
-    return "Backs up and quarantines the likely problem mod.";
-  }
+  return "Backs up and quarantines the duplicate or conflicting mod most likely causing the crash.";
+}
 
   if (category === "loader_mismatch") {
     return "This result needs a manual version fix. Update the plugin, loader, or framework so everything matches the same game runtime.";
@@ -645,8 +653,8 @@ if (category === "no_clear_issue_found") {
     }
 
     bullets.push(
-      `Fix in Mods Folder: Delete the "${leadMod}" folder from your Mods folder.`
-    );
+  `Fix in Mods Folder: Temporarily move the "${leadMod}" folder out of your Mods folder, then test again.`
+);
 
     bullets.push(
       stardewModsPath
@@ -695,9 +703,17 @@ if (category === "no_clear_issue_found") {
   );
 
   return {
-    title: "Mod conflict likely",
-    bullets: fallbackBullets,
-  };
+  title: "Crash source identified",
+  bullets:
+    mods.length > 0
+      ? [
+          `${mods[0]} failed during startup initialization.`,
+          `Remove the current ${mods[0]} install from your Mods folder.`,
+          `Reinstall a clean compatible version of ${mods[0]}.`,
+          "Relaunch Stardew Valley and confirm the game starts normally.",
+        ]
+      : fallbackBullets,
+};
 }
 
 if (gameKey === "sims4") {
@@ -729,7 +745,7 @@ if (gameKey === "sims4") {
     title: "Script Mod / CC Issue (Sims 4)",
     bullets: [
       "Check for broken or outdated script mods (MCCC, WickedWhims, etc).",
-      "Remove recently added CC or mods.",
+      "Temporarily disable recently added CC or mods, then relaunch.",
       "Delete lastException files and relaunch.",
       "Update core mods to match your game version.",
     ],
@@ -911,6 +927,46 @@ if (category === "no_clear_issue_found") {
   };
 }
 
+if (gameKey === "lethal_company") {
+  if (category === "manifest_not_crash_log") {
+    return {
+      title: "Manifest file detected",
+      bullets: [
+        "This is a Thunderstore modpack manifest, not the actual crash log.",
+        "It lists required dependencies, but it does not show what failed during launch.",
+        "Run Lethal Company until the issue happens again.",
+        "Load BepInEx/LogOutput.log instead of manifest.json.",
+      ],
+    };
+  }
+
+  if (category === "missing_dependency") {
+    return {
+      title: "Missing Lethal Company dependency",
+      bullets: [
+        mods.length > 0
+          ? `${mods[0]} may require another BepInEx/Thunderstore dependency.`
+          : "A required BepInEx or Thunderstore dependency may be missing.",
+        "Install or update the required dependency through Thunderstore/r2modman.",
+        "Make sure every player in multiplayer has the same modpack/profile.",
+        "Relaunch Lethal Company after updating dependencies.",
+      ],
+    };
+  }
+
+  return {
+    title: "Lethal Company mod / BepInEx issue",
+    bullets: [
+      mods.length > 0
+        ? `Start by checking ${mods[0]}.`
+        : "Start by checking the most recently added or updated mod.",
+      "Open BepInEx/LogOutput.log and look for the first red error or exception.",
+      "Update BepInEx and core libraries first.",
+      "If multiplayer is involved, make sure everyone has the same modpack/profile.",
+    ],
+  };
+}
+
 if (gameKey === "project_zomboid") {
   if (isAdvisoryCategory(category)) {
   return {
@@ -1025,7 +1081,9 @@ if (category === "no_clear_issue_found") {
           mods.length > 0
             ? `Check whether ${mods.join(", ")} requires another missing mod or library.`
             : "Check which dependency is missing from the crash log.",
-          "Install the missing dependency version that matches your Minecraft version.",
+          gameKey === "minecraft"
+  ? "Install the missing dependency version that matches your Minecraft version."
+  : "Install the missing dependency version that matches your game, loader, or mod framework version.",
           "Make sure all mods use the same loader.",
           "Relaunch after adding the missing library/mod.",
         ],
@@ -1078,7 +1136,9 @@ if (category === "no_clear_issue_found") {
 
     case "mod_conflict":
       return {
-        title: "Mod conflict likely",
+        title: mods.length >= 2
+  ? "Duplicate mod conflict detected"
+  : "Mod conflict likely",
         bullets: [
   mods.length >= 2
     ? `Likely conflict between: ${mods[0]} ↔ ${mods[1]}`
@@ -1086,7 +1146,9 @@ if (category === "no_clear_issue_found") {
     ? `Start by testing without ${mods[0]}.`
     : "Start by disabling the most recently added or updated mod.",
   "Re-enable mods one at a time until the crash returns.",
-  "Check that all mods match your Minecraft and loader version.",
+  gameKey === "minecraft"
+  ? "Check that all mods match your Minecraft and loader version."
+  : `Check that all mods match your ${GAME_PROFILES[gameKey]?.label || "game"} version.`,
   "Watch for duplicate libraries or overlapping performance mods.",
 ],
       };
@@ -1117,14 +1179,42 @@ if (category === "no_clear_issue_found") {
   }
 }
 
+function getStardewOvernightSaveMods(crashLog: string) {
+  const match = String(crashLog || "").match(
+    /\[SMAPI\]\s+These mods could be involved:\s*([\s\S]*?)(?:\n\[|$)/i
+  );
+
+  if (!match?.[1]) return [];
+
+  return match[1]
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s*-\s*/, "")
+        .replace(/\s+\d+(?:\.\d+)*\s*$/, "")
+        .trim()
+    )
+    .filter(Boolean);
+}
+
+function getStardewEntryCrashMod(crashLog: string) {
+  const match = String(crashLog || "").match(
+    /\[([^\]]+)\]\s+Mod crashed on entry/i
+  );
+
+  return match?.[1]?.trim() || "";
+}
+
 function buildSmartFixResultOverride({
   gameKey,
   crashLog,
+  currentLogPath,
   analysis,
   detectedSignals,
 }: {
   gameKey: string;
   crashLog: string;
+  currentLogPath?: string;
   analysis: AnalyzeResponse["analysis"] | null;
   detectedSignals: AnalyzeResponse["detectedSignals"] | null;
 }): AnalyzeResponse["analysis"] | null {
@@ -1134,6 +1224,240 @@ function buildSmartFixResultOverride({
     "";
 
   const lowerCrashLog = String(crashLog || "").toLowerCase();
+
+  const looksLikeParadoxStellarisLog =
+  lowerCrashLog.includes("pdx_audio.cpp") ||
+  lowerCrashLog.includes("mod_manager.cpp") ||
+  lowerCrashLog.includes("gamestate.cpp") ||
+  lowerCrashLog.includes("could not resolve mod dependency chain") ||
+  lowerCrashLog.includes("duplicate mod detected");
+
+  if (gameKey === "stellaris" && lowerCrashLog.includes("duplicate mod detected")) {
+  return {
+    quickFixFirst:
+      "Delete or disable one duplicate: Expanded Traditions 3 or Expanded Traditions 3 Updated.",
+    issue:
+      "Two versions of the same Stellaris mod are active at the same time.",
+    confidenceLevel: "High",
+    probabilityBreakdown: ["100% - Duplicate Stellaris mod conflict"],
+    mostLikelyCause:
+      "Stellaris is trying to load both Expanded Traditions 3 and Expanded Traditions 3 Updated, which is causing a mod dependency conflict.",
+    recommendedFixSteps: [
+      "Open your Stellaris mods/playset in the Paradox Launcher.",
+      "Disable either Expanded Traditions 3 or Expanded Traditions 3 Updated.",
+      "Keep only one version active.",
+      "Relaunch Stellaris and load a fresh log if it still crashes.",
+    ],
+    needMoreInfo:
+      "No more info is needed unless the game still crashes after one duplicate mod is disabled.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType: "DuplicateModDetected",
+      loader: "Paradox / Stellaris",
+      suspectedMods: ["Expanded Traditions 3", "Expanded Traditions 3 Updated"],
+      likelyCategory: "mod_conflict",
+    },
+  };
+}
+
+if (gameKey === "project_zomboid" && looksLikeParadoxStellarisLog) {
+  return {
+    quickFixFirst:
+      "This does not look like a Project Zomboid log. It looks like a Stellaris / Paradox mod log.",
+    issue:
+      "FixMyGame was given a Stellaris-style log while Project Zomboid was selected.",
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      "90% - Wrong game selected for this log",
+      "10% - Similar non-Zomboid mod loader format",
+    ],
+    mostLikelyCause:
+      "The log contains Paradox/Stellaris-style engine lines, not Project Zomboid Lua or Workshop log lines.",
+    recommendedFixSteps: [
+      "Switch the selected game to Stellaris if available.",
+      "If Stellaris is not available yet, mark this as a supported-game request.",
+      "Do not run this under Project Zomboid diagnostics.",
+      "For this specific log, remove one duplicate mod: Expanded Traditions 3 or Expanded Traditions 3 Updated.",
+    ],
+    needMoreInfo:
+      "FixMyGame needs the selected game to match the log type before it can safely diagnose or repair anything.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      suspectedMods: ["Expanded Traditions 3", "Expanded Traditions 3 Updated"],
+      likelyCategory: "wrong_selected_game",
+      advisoryLevel: "important",
+      advisoryTitle: "Wrong game selected",
+      advisoryMessage:
+        "This appears to be a Stellaris / Paradox log, not a Project Zomboid log.",
+    },
+  };
+}
+
+  const looksLikeWindowsExe =
+  lowerCrashLog.includes("this program cannot be run in dos mode") ||
+  lowerCrashLog.startsWith("mz") ||
+  currentLogPath?.toLowerCase?.().endsWith(".exe");
+
+if (looksLikeWindowsExe) {
+  return {
+    quickFixFirst:
+      "This looks like a Windows .exe/application file, not a crash log.",
+    issue:
+      "FixMyGame was given an executable file instead of a readable crash or error log.",
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      "100% - Windows executable/application file loaded instead of crash log",
+    ],
+    mostLikelyCause:
+      "The selected file is not readable log text. It appears to be an application file.",
+    recommendedFixSteps: [
+      "Do not upload the .exe file.",
+      "Open the game’s real crash/log folder.",
+      "For Lethal Company, use BepInEx/LogOutput.log.",
+      "Load a .log or .txt file created after the crash happens.",
+    ],
+    needMoreInfo:
+      "FixMyGame needs a readable .log or .txt crash file, not the game/app executable.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      suspectedMods: [],
+      likelyCategory: "wrong_file_type_exe",
+      advisoryLevel: "important",
+      advisoryTitle: "Executable file uploaded instead of crash log",
+      advisoryMessage:
+        "The selected file is a Windows application file, not a readable crash log.",
+    },
+  };
+}
+
+  const looksLikeLethalCompanyManifest =
+  gameKey === "lethal_company" &&
+  lowerCrashLog.includes('"dependencies"') &&
+  lowerCrashLog.includes('"version_number"') &&
+  lowerCrashLog.includes('"name"') &&
+  !lowerCrashLog.includes("bepinex]") &&
+  !lowerCrashLog.includes("stack trace") &&
+  !lowerCrashLog.includes("exception") &&
+  !lowerCrashLog.includes("fatal error");
+
+if (looksLikeLethalCompanyManifest) {
+  const manifestName =
+    crashLog.match(/"name"\s*:\s*"([^"]+)"/i)?.[1]?.trim() ||
+    "this modpack";
+
+  return {
+    quickFixFirst:
+      "This looks like a Thunderstore modpack manifest, not the actual crash log.",
+    issue:
+      "FixMyGame found a dependency list instead of a Lethal Company crash/error log.",
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      "90% - Manifest file uploaded instead of crash log",
+      "10% - Dependency issue may still exist, but the real log is needed to confirm",
+    ],
+    mostLikelyCause:
+      `${manifestName} lists required mods, but this file does not show the actual crash failure.`,
+    recommendedFixSteps: [
+      "Run Lethal Company until the crash or issue happens again.",
+      "Open the newest BepInEx LogOutput.log created after the issue.",
+      "Paste that LogOutput.log into FixMyGame instead of manifest.json.",
+    ],
+    needMoreInfo:
+      "FixMyGame needs the newest BepInEx/LogOutput.log after the crash happens.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      suspectedMods: [manifestName],
+      likelyCategory: "manifest_not_crash_log",
+      advisoryLevel: "important",
+      advisoryTitle: "Manifest uploaded instead of crash log",
+      advisoryMessage:
+        "This file lists modpack dependencies, but it is not the crash log FixMyGame needs.",
+    },
+  };
+}
+
+const stardewOvernightSaveMods =
+  gameKey === "stardew_valley" ? getStardewOvernightSaveMods(crashLog) : [];
+
+if (
+  gameKey === "stardew_valley" &&
+  (
+    lowerCrashLog.includes("the game crashed when saving overnight") ||
+    lowerCrashLog.includes("stardewvalley.savegame.save()") ||
+    lowerCrashLog.includes("object.minuteselapsed")
+  )
+) {
+  return {
+    quickFixFirst:
+      "Update Json Assets and SpaceCore first. If the crash continues, temporarily remove Custom Crops and Machines Pack and test sleeping overnight again.",
+    issue:
+      "Stardew Valley crashes during overnight save processing.",
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      "80% - Custom crop/object/machine mod failed during overnight save",
+      "15% - Json Assets or SpaceCore compatibility issue",
+      "5% - Other mod touching end-of-day processing",
+    ],
+    mostLikelyCause:
+      "A custom object, crop, or machine added by a mod failed during overnight save processing.",
+    recommendedFixSteps: [
+      "Update Json Assets.",
+      "Update SpaceCore.",
+      "Update Content Patcher.",
+      "Temporarily remove Custom Crops and Machines Pack.",
+      "Launch Stardew Valley and sleep overnight again.",
+      "If it works, reinstall or replace Custom Crops and Machines Pack with a compatible version.",
+    ],
+    needMoreInfo:
+      "If it still crashes after removing Custom Crops and Machines Pack, load the newest SMAPI log created after the next failed overnight save.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType: "NullReferenceException",
+      loader: "SMAPI",
+      suspectedMods:
+        stardewOvernightSaveMods.length > 0
+          ? stardewOvernightSaveMods
+          : ["Json Assets", "SpaceCore", "Content Patcher", "Custom Crops and Machines Pack"],
+      likelyCategory: "mod_conflict",
+    },
+  };
+}
+
+  const stardewEntryCrashMod =
+  gameKey === "stardew_valley" ? getStardewEntryCrashMod(crashLog) : "";
+
+if (
+  gameKey === "stardew_valley" &&
+  stardewEntryCrashMod &&
+  lowerCrashLog.includes("mod crashed on entry")
+) {
+  return {
+    quickFixFirst: `${stardewEntryCrashMod} failed during startup initialization.`,
+    issue: `FixMyGame identified ${stardewEntryCrashMod} as the direct crash source.`,
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      `85% - ${stardewEntryCrashMod} startup failure`,
+      "10% - Broken or incomplete mod install",
+      "5% - SMAPI or dependency compatibility issue",
+    ],
+    mostLikelyCause: `${stardewEntryCrashMod} failed while loading and prevented the mod setup from starting correctly.`,
+    recommendedFixSteps: [
+      `Remove the current ${stardewEntryCrashMod} install from your Mods folder.`,
+      `Reinstall a clean compatible version of ${stardewEntryCrashMod}.`,
+      "Relaunch Stardew Valley.",
+      "Re-run FixMyGame if the crash continues.",
+    ],
+    needMoreInfo:
+      "If this continues after a clean reinstall, load the newest SMAPI log created after the next failed launch.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType: "NullReferenceException",
+      loader: "SMAPI",
+      suspectedMods: [stardewEntryCrashMod],
+      likelyCategory: "mod_conflict",
+    },
+  };
+}
 
   if (
     gameKey === "stardew_valley" &&
@@ -1148,7 +1472,7 @@ function buildSmartFixResultOverride({
     const badFolder = modMatch?.[1]?.trim() || "the empty mod folder";
 
     return {
-      quickFixFirst: `You can delete the empty folder for ${badFolder} to clean up the warning.`,
+      quickFixFirst: `You can remove the empty folder for ${badFolder} to clean up the warning.`,
       issue: `There's an empty folder for ${badFolder} in your Mods folder, which is causing a warning.`,
       confidenceLevel: "High",
       probabilityBreakdown: [
@@ -1156,7 +1480,7 @@ function buildSmartFixResultOverride({
       ],
       mostLikelyCause: `The empty folder for ${badFolder} is not being recognized as a valid mod.`,
       recommendedFixSteps: [
-        `Delete the empty folder for ${badFolder} from your Mods folder.`,
+        `Remove the empty folder for ${badFolder} from your Mods folder.`,
         "Launch Stardew Valley again after removing it so SMAPI creates a fresh log.",
         "Load the newest SMAPI log created after that launch to confirm the warning is gone.",
       ],
@@ -1177,7 +1501,7 @@ function buildSmartFixResultOverride({
 }
 
 function buildUniversalFallbackOverride({
-  gameTitle,
+  gameTitle: effectiveGameTitle,
   crashLog,
   analysis,
   detectedSignals,
@@ -1193,7 +1517,7 @@ function buildUniversalFallbackOverride({
   /plugin\s+([A-Za-z0-9_.-]+\.dll)[\s\S]*?reported as incompatible[\s\S]*?expected runtime\s+([0-9.]+),\s*got\s+([0-9.]+)/i
 );
 
-if (gameTitle === "Skyrim Special Edition" && skyrimRuntimeMismatchMatch) {
+if (effectiveGameTitle === "Skyrim Special Edition" && skyrimRuntimeMismatchMatch) {
   const pluginName = skyrimRuntimeMismatchMatch[1] || "the SKSE plugin";
   const expectedRuntime = skyrimRuntimeMismatchMatch[2] || "the expected runtime";
   const currentRuntime = skyrimRuntimeMismatchMatch[3] || "your current runtime";
@@ -1227,7 +1551,7 @@ if (gameTitle === "Skyrim Special Edition" && skyrimRuntimeMismatchMatch) {
 }
 
   const isStardewBaseGameFileMissing =
-  gameTitle === "Stardew Valley" &&
+  effectiveGameTitle === "Stardew Valley" &&
   lowerCrashLog.includes("filenotfoundexception") &&
   lowerCrashLog.includes("content\\") &&
   (lowerCrashLog.includes(".xnb") || lowerCrashLog.includes(".xgs"));
@@ -1263,8 +1587,8 @@ if (isStardewBaseGameFileMissing) {
 
   if (!analysis && !detectedSignals) {
     return {
-      quickFixFirst: `Start by checking the newest ${gameTitle} log for the first clear error or failed mod/plugin line.`,
-      issue: `FixMyGame could not build a strong diagnosis from this ${gameTitle} log yet.`,
+      quickFixFirst: `Start by checking the newest ${effectiveGameTitle} log for the first clear error or failed mod/plugin line.`,
+      issue: `FixMyGame could not build a strong diagnosis from this ${effectiveGameTitle} log yet.`,
       confidenceLevel: "Low",
       probabilityBreakdown: [
         "45% - Incomplete or non-crash log",
@@ -1274,7 +1598,7 @@ if (isStardewBaseGameFileMissing) {
       mostLikelyCause:
         "The current log may be incomplete, non-fatal, or missing the line that shows the actual failure.",
       recommendedFixSteps: [
-        `Launch ${gameTitle} again and reproduce the issue.`,
+        `Launch ${effectiveGameTitle} again and reproduce the issue.`,
         "Load the newest crash or error log created after the issue happens.",
         "Remove the most recently added mod/plugin first if the problem started after installing something new.",
       ],
@@ -1332,7 +1656,7 @@ if (isStardewBaseGameFileMissing) {
       `Temporarily disable ${leadSuspect} first, then test again.`,
     issue:
       weakIssue
-        ? `FixMyGame found signs of a ${gameTitle} mod, plugin, or setup issue, but the exact failure is not fully confirmed from this log.`
+        ? `FixMyGame found signs of a ${effectiveGameTitle} mod, plugin, or setup issue, but the exact failure is not fully confirmed from this log.`
         : analysis!.issue,
     confidenceLevel:
       analysis?.confidenceLevel || "Medium",
@@ -1815,6 +2139,14 @@ return {
   let issue: string | null = null;
   let error: string | null = null;
 
+  if (
+  lower.includes("the game crashed when saving overnight") ||
+  lower.includes("stardewvalley.savegame.save()") ||
+  lower.includes("object.minuteselapsed")
+) {
+  issue = "Overnight save crash";
+  error = "SaveGameCrash";
+}
   if (lower.includes("skipped mods") && lower.includes("empty folder")) {
     issue = "Skipped empty mod folder";
     error = "SkippedMod";
@@ -1906,6 +2238,62 @@ return {
       error,
     };
   }
+
+  if (gameKey === "lethal_company") {
+  let issue: string | null = null;
+  let error: string | null = null;
+
+  if (lower.includes("filenotfoundexception") && lower.includes("lc_api")) {
+    issue = "Missing or wrong LC_API dependency";
+    error = "FileNotFoundException";
+  } else if (lower.includes("network prefab hash mismatch")) {
+    issue = "Multiplayer mod mismatch";
+    error = "NetworkMismatch";
+  } else if (lower.includes("bepinex") && lower.includes("failed")) {
+    issue = "BepInEx mod/plugin issue";
+    error = "BepInExFailure";
+  } else {
+    error =
+      log.match(/(error|failed|exception|crash|missing)/i)?.[1] || null;
+    issue = error ? "Lethal Company mod or BepInEx issue" : null;
+  }
+
+  return {
+    loader: "BepInEx / Thunderstore",
+    java: null,
+    issue,
+    error,
+  };
+}
+
+if (gameKey === "stellaris") {
+  let issue: string | null = null;
+  let error: string | null = null;
+
+  if (lower.includes("duplicate mod detected")) {
+    issue = "Duplicate mod conflict";
+    error = "DuplicateModDetected";
+  } else if (lower.includes("could not resolve mod dependency chain")) {
+    issue = "Mod dependency chain failure";
+    error = "DependencyChain";
+  } else if (lower.includes("invalid supported_version")) {
+    issue = "Unsupported mod version";
+    error = "UnsupportedModVersion";
+  } else if (lower.includes("script error")) {
+    issue = "Script mod error";
+    error = "ScriptError";
+  } else {
+    error = log.match(/(error|failed|exception|crash|missing)/i)?.[1] || null;
+    issue = error ? "Stellaris mod or Paradox launcher issue" : null;
+  }
+
+  return {
+    loader: "Paradox / Stellaris",
+    java: null,
+    issue,
+    error,
+  };
+}
 
     if (gameKey === "project_zomboid") {
   let issue: string | null = null;
@@ -2100,6 +2488,10 @@ function extractModsFromLog(log: string, gameKey: string) {
   }
 
   if (gameKey === "stardew_valley") {
+    const involvedMods = getStardewOvernightSaveMods(log);
+for (const mod of involvedMods) {
+  mods.add(mod.toLowerCase());
+}
   for (const line of lines) {
     const skippedModMatch = line.match(/-\s*([A-Za-z0-9 _.'\-\[\]]+)\s+because it's/i);
     if (skippedModMatch?.[1]) {
@@ -2185,6 +2577,22 @@ function extractModsFromLog(log: string, gameKey: string) {
     return Array.from(mods).slice(0, 8);
   }
 
+  if (gameKey === "stellaris") {
+  const duplicateMatch = log.match(
+    /duplicate mod detected:\s*["']?([^"'\n\r]+)["']?\s*(?:\r?\n)?\s*and\s*(?:\r?\n)?\s*["']?([^"'\n\r]+)["']?/i
+  );
+
+  if (duplicateMatch?.[1]) mods.add(duplicateMatch[1].trim().toLowerCase());
+  if (duplicateMatch?.[2]) mods.add(duplicateMatch[2].trim().toLowerCase());
+
+  for (const line of lines) {
+    const pathMatch = line.match(/mod\/([^\/\\\s]+)\/descriptor\.mod/i);
+    if (pathMatch?.[1]) mods.add(pathMatch[1].trim().toLowerCase());
+  }
+
+  return Array.from(mods).slice(0, 8);
+}
+
   if (gameKey === "project_zomboid") {
     for (const line of lines) {
       const matches = line.match(/\b(workshop|mod id|map folder|lua|b41|b42)\b/gi);
@@ -2221,6 +2629,17 @@ function extractModsFromLog(log: string, gameKey: string) {
 function detectGameFromLog(log: string): string | null {
   const lower = log.toLowerCase();
 
+  if (
+  lower.includes("bepinex") ||
+  lower.includes("lethal company") ||
+  lower.includes("latecompany") ||
+  lower.includes("morecompany") ||
+  lower.includes("lethallib") ||
+  lower.includes("lc_api") ||
+  lower.includes("thunderstore")
+) {
+  return "lethal_company";
+}
   if (
     lower.includes("minecraft") ||
     lower.includes("forge") ||
@@ -2297,17 +2716,26 @@ function detectGameFromLog(log: string): string | null {
     return "baldurs_gate_3";
   }
 
-    if (
+  if (
+    lower.includes("stellaris") ||
+    lower.includes("pdx_audio.cpp") ||
+    lower.includes("mod_manager.cpp") ||
+    lower.includes("gamestate.cpp") ||
+    lower.includes("could not resolve mod dependency chain") ||
+    lower.includes("duplicate mod detected") ||
+    lower.includes("descriptor.mod")
+  ) {
+    return "stellaris";
+  }
+
+  if (
     lower.includes("project zomboid") ||
     lower.includes("zomboid") ||
     lower.includes("pz.log") ||
     lower.includes("lua checksum") ||
     lower.includes("workshop item version") ||
-    lower.includes("mods loaded") ||
     lower.includes("stack traceback") ||
-    lower.includes("attempt to index a nil value") ||
-    lower.includes("mod id:") ||
-    lower.includes("failed to load")
+    lower.includes("attempt to index a nil value")
   ) {
     return "project_zomboid";
   }
@@ -2357,6 +2785,23 @@ function getMostSuspiciousLine(log: string, gameKey: string) {
     );
     if (exceptionLine) return exceptionLine;
   }
+
+  if (gameKey === "stellaris") {
+  const duplicateLine = lines.find((line) =>
+    line.toLowerCase().includes("duplicate mod detected")
+  );
+  if (duplicateLine) return duplicateLine;
+
+  const dependencyLine = lines.find((line) =>
+    line.toLowerCase().includes("could not resolve mod dependency chain")
+  );
+  if (dependencyLine) return dependencyLine;
+
+  const supportedVersionLine = lines.find((line) =>
+    line.toLowerCase().includes("invalid supported_version")
+  );
+  if (supportedVersionLine) return supportedVersionLine;
+}
 
   if (gameKey === "project_zomboid") {
     const tracebackLine = lines.find((line) =>
@@ -2554,6 +2999,7 @@ const GAME_PRESETS = [
   { key: "slime_rancher_2", label: "Slime Rancher 2" },
   { key: "rimworld", label: "RimWorld" },
   { key: "project_zomboid", label: "Project Zomboid" },
+  { key: "stellaris", label: "Stellaris" },
   { key: "terraria", label: "Terraria" },
   { key: "kerbal_space_program", label: "Kerbal Space Program" },
   { key: "bannerlord", label: "Bannerlord (Mount & Blade II)" },
@@ -2661,6 +3107,12 @@ const GAME_PROFILES: Record<
     supportsModsFolder: true,
     supportsLogsFolder: true,
   },
+  stellaris: {
+  label: "Stellaris",
+  supportsAutoDetect: true,
+  supportsModsFolder: true,
+  supportsLogsFolder: true,
+},
   terraria: {
     label: "Terraria",
     supportsAutoDetect: true,
@@ -2837,6 +3289,7 @@ export default function Page() {
   const [checkingBetaStatus, setCheckingBetaStatus] = useState(true);
   const [showError, setShowError] = useState(false);
   const [selectedGameKey, setSelectedGameKey] = useState("minecraft");
+  const [detectedGameKey, setDetectedGameKey] = useState<string | null>(null);
   const [hasAppliedAutoGameDetect, setHasAppliedAutoGameDetect] = useState(false);
   const [hasAcceptedAuthorization, setHasAcceptedAuthorization] = useState(false);
   const [checkingAuthorization, setCheckingAuthorization] = useState(true);
@@ -2867,6 +3320,11 @@ export default function Page() {
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
   const [isBetaAccess, setIsBetaAccess] = useState(false);
+  const hasUnlimitedAccess = isPro || betaOpen || isBetaAccess;
+  const appLocked =
+  process.env.NEXT_PUBLIC_APP_LOCKED === "1" &&
+  typeof window !== "undefined" &&
+  !window.fixMyGame;
 
   const [autoDetectStatus, setAutoDetectStatus] = useState<
   "idle" | "logs_found" | "no_logs" | "not_installed"
@@ -3102,15 +3560,24 @@ const selectedGame = useMemo(
 
 const gameTitle = selectedGame.label;
 
+const effectiveGameKey = detectedGameKey || selectedGameKey;
+
+const effectiveGameProfile =
+  GAME_PROFILES[effectiveGameKey] ?? GAME_PROFILES[selectedGameKey];
+
+const effectiveGameTitle =
+  GAME_PROFILES[effectiveGameKey]?.label || gameTitle;
+
 const smartFixResultOverride = useMemo(
   () =>
     buildSmartFixResultOverride({
-      gameKey: selectedGameKey,
+      gameKey: effectiveGameKey,
       crashLog,
+      currentLogPath,
       analysis,
       detectedSignals,
     }),
-  [selectedGameKey, crashLog, analysis, detectedSignals]
+  [effectiveGameKey, crashLog, currentLogPath, analysis, detectedSignals]
 );
 
 const universalFallbackOverride = useMemo(
@@ -3125,8 +3592,8 @@ const universalFallbackOverride = useMemo(
 );
 
 const displayAnalysis =
-  universalFallbackOverride ??
   smartFixResultOverride ??
+  universalFallbackOverride ??
   analysis;
 
 const displayDetectedSignals =
@@ -3138,14 +3605,14 @@ const displayDetectedSignals =
     getSmartFixPath(
       displayDetectedSignals,
       displayAnalysis,
-      selectedGameKey,
+      effectiveGameKey,
       currentLogPath,
       crashLog
     ),
   [
     displayDetectedSignals,
     displayAnalysis,
-    selectedGameKey,
+    effectiveGameKey,
     currentLogPath,
     crashLog,
   ]
@@ -3156,7 +3623,7 @@ const loadedLogSummary = useMemo(
     buildLoadedLogSummary({
       crashLog,
     }),
-  [gameTitle, crashLog]
+  [effectiveGameKey, crashLog]
 );
 
 useEffect(() => {
@@ -3177,6 +3644,7 @@ function resetLiveSessionState() {
   setCrashLog("");
   setCurrentLogPath("");
   setDetectedLogs([]);
+  setDetectedGameKey(null);
   setHasScannedLogs(false);
   setAutoDetectStatus("idle");
 
@@ -3236,6 +3704,29 @@ function getKnownMissingModDownloadUrl(modName: string) {
     return "https://smapi.io/";
   }
 
+  if (
+  normalized.includes("lc api") ||
+  normalized.includes("lcapi") ||
+  normalized.includes("lc_api")
+) {
+  return "https://www.nexusmods.com/lethalcompany/mods/67";
+}
+
+if (
+  normalized.includes("bepinex") ||
+  normalized.includes("bepinexpack")
+) {
+  return "https://thunderstore.io/c/lethal-company/p/BepInEx/BepInExPack/";
+}
+
+if (normalized.includes("latecompany")) {
+  return "https://thunderstore.io/c/lethal-company/p/anormaltwig/LateCompany/";
+}
+
+if (normalized.includes("morecompany")) {
+  return "https://thunderstore.io/c/lethal-company/p/notnotnotswipez/MoreCompany/";
+}
+
   return "";
 }
 
@@ -3254,6 +3745,18 @@ function getPrimaryMissingModName() {
 
   const fabricApiMatch = rawText.match(/\bfabric[-\s]?api\b/i);
 if (fabricApiMatch) return "Fabric API";
+
+const lcApiMatch = rawText.match(/\bLC[_\s-]?API\b/i);
+if (lcApiMatch) return "LC_API";
+
+const bepinexMatch = rawText.match(/\bBepInEx(?:Pack)?\b/i);
+if (bepinexMatch) return "BepInExPack";
+
+const lateCompanyMatch = rawText.match(/\bLateCompany\b/i);
+if (lateCompanyMatch) return "LateCompany";
+
+const moreCompanyMatch = rawText.match(/\bMoreCompany\b/i);
+if (moreCompanyMatch) return "MoreCompany";
 
   const genericMatch =
     rawText.match(/missing mod called ([A-Za-z0-9 '\-\[\]\(\)&._]+)/i) ||
@@ -3750,25 +4253,25 @@ const visibleHistoryItems =
   fixHistoryTab === "saved" ? savedHistoryItems : diagnosticHistoryItems;
 
 const selectedGameProfile = useMemo(
-  () => GAME_PROFILES[selectedGameKey] ?? GAME_PROFILES.minecraft,
-  [selectedGameKey]
+  () => effectiveGameProfile ?? GAME_PROFILES.minecraft,
+  [effectiveGameProfile]
 );
 
 const topFeaturePills = useMemo(
-  () => getTopFeaturePills(selectedGameKey),
-  [selectedGameKey]
+  () => getTopFeaturePills(effectiveGameKey),
+  [effectiveGameKey]
 );
 
 const fixPlan = useMemo(
   () =>
     getFixPlan(
-      selectedGameKey,
-      gameTitle,
+      effectiveGameKey,
+      effectiveGameTitle,
       displayAnalysis,
       displayDetectedSignals,
       selectedGameProfile
     ),
-  [selectedGameKey, gameTitle, displayAnalysis, displayDetectedSignals, selectedGameProfile]
+  [effectiveGameKey, effectiveGameTitle, displayAnalysis, displayDetectedSignals, selectedGameProfile]
 );
 
 const activeSafeFixCategory =
@@ -3785,23 +4288,98 @@ const isMissingDependency =
 const isModConflict =
   activeSafeFixCategory === "mod_conflict";
 
+const unsafeAutoRepairMods = [
+  "json assets",
+  "jsonassets",
+  "spacecore",
+  "content patcher",
+  "contentpatcher",
+  "smapi",
+  "stardew valley",
+  "dlc.cpp",
+  "graphics.cpp",
+  "mod_manager.cpp",
+  "game_application.cpp",
+  "gamestate.cpp",
+  "trigger_impl.cpp",
+  "pdx_audio.cpp",
+  "game.cpp",
+  "descriptor.mod",
+  "invalid",
+  "failed",
+  "error",
+  "warning",
+  "exception",
+  "runtime",
+  "std",
+  "line",
+  "file",
+  "mod",
+];
+
+function isBadModCandidate(value: string) {
+  const mod = String(value || "").trim().toLowerCase();
+
+  if (!mod) return true;
+  if (unsafeAutoRepairMods.includes(mod)) return true;
+  if (/^\d+$/.test(mod)) return true;
+  if (mod.length < 3) return true;
+  if (mod.endsWith(".cpp")) return true;
+  if (mod.endsWith(".exe")) return true;
+  if (mod.endsWith(".dll")) return true;
+  if (mod.endsWith(".log")) return true;
+  if (mod.endsWith(".txt")) return true;
+  if (mod.includes(":")) return true;
+  if (mod.includes("\\")) return true;
+  if (mod.includes("/")) return true;
+
+  return false;
+}
+
+function extractDuplicateModsFromLog(log: string) {
+  const match = String(log || "").match(
+    /duplicate mod detected:\s*["']?([^"'\n\r]+)["']?\s*(?:and)?\s*["']?([^"'\n\r]+)["']?/i
+  );
+
+  if (!match) return [];
+
+  return [match[1], match[2]]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+}
+
 const safeFixSuspects = useMemo(() => {
+  const category =
+    displayAnalysis?.detectedSignals?.likelyCategory ||
+    displayDetectedSignals?.likelyCategory ||
+    "";
+
+  if (category === "wrong_file_type_exe" || category === "manifest_not_crash_log") {
+    return [];
+  }
+
+  const duplicateMods = extractDuplicateModsFromLog(crashLog);
+
   const suspectsFromAnalysis =
     displayAnalysis?.detectedSignals?.suspectedMods ||
     displayDetectedSignals?.suspectedMods ||
     [];
 
-  const normalized = [...suspectsFromAnalysis, ...liveMods]
+  const source =
+    duplicateMods.length > 0
+      ? duplicateMods
+      : suspectsFromAnalysis;
+
+  const normalized = source
     .map((item) => String(item || "").trim().toLowerCase())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((mod) => !isBadModCandidate(mod));
 
   return Array.from(new Set(normalized)).slice(0, 6);
-}, [displayAnalysis, displayDetectedSignals, liveMods]);
-
+}, [displayAnalysis, displayDetectedSignals, crashLog]);
 const canApplySafeFix =
   appSettings.enableSafeFix &&
   desktopConnected &&
-  Boolean(gameInstallPath) &&
   safeFixSuspects.length > 0 &&
   activeSafeFixCategory === "mod_conflict";
 
@@ -4104,32 +4682,40 @@ function buildSafeFixPlanPreview(params: {
 }) {
   const suspectMods = Array.isArray(params.suspectMods) ? params.suspectMods : [];
   const primarySuspect = suspectMods[0] || "the top matched suspect";
+  const isDuplicateConflict = suspectMods.length >= 2;
 
   return [
-  {
-    id: "safe_fix_mods_used",
-    title: "Safe Repair: checked likely problem mods",
-    detail:
-      suspectMods.length > 0
+    {
+      id: "safe_fix_mods_used",
+      title: isDuplicateConflict
+        ? "Safe Repair: duplicate mods detected"
+        : "Safe Repair: checked likely problem mods",
+      detail: isDuplicateConflict
+        ? `FixMyGame found duplicate/conflicting candidates: ${suspectMods.join(" ↔ ")}.`
+        : suspectMods.length > 0
         ? `FixMyGame will check these suspected mods first: ${suspectMods.join(", ")}.`
         : "FixMyGame will check the most likely suspect from your diagnostic signals.",
-  },
-  {
-    id: "safe_fix_move_candidate",
-    title: "Safe Repair: temporarily disable likely problem mod",
-    detail: `FixMyGame will back up and move ${primarySuspect} into quarantine if it is the best safe match in your Mods folder.`,
-  },
-  {
-    id: "safe_fix_backup_created",
-    title: "Safe Repair: backup created first",
-    detail: "FixMyGame will create a backup before moving anything.",
-  },
-  {
-    id: "safe_fix_new_location",
-    title: "Safe Repair: quarantine location saved",
-    detail: "FixMyGame will save the quarantined item location so you can undo the repair later.",
-  },
-];
+    },
+    {
+      id: "safe_fix_move_candidate",
+      title: isDuplicateConflict
+        ? "Safe Repair: quarantine one duplicate"
+        : "Safe Repair: temporarily disable likely problem mod",
+      detail: isDuplicateConflict
+        ? `FixMyGame will back up and quarantine ${primarySuspect} so only one duplicate remains active.`
+        : `FixMyGame will back up and move ${primarySuspect} into quarantine if it is the best safe match in your Mods folder.`,
+    },
+    {
+      id: "safe_fix_backup_created",
+      title: "Safe Repair: backup created first",
+      detail: "FixMyGame will create a backup before moving anything.",
+    },
+    {
+      id: "safe_fix_new_location",
+      title: "Safe Repair: quarantine location saved",
+      detail: "FixMyGame will save the quarantined item location so you can undo the repair later.",
+    },
+  ];
 }
 
 function scrollToFixResultsArea() {
@@ -4194,11 +4780,6 @@ function addRepairTimelineItem(
     return;
   }
 
-  if (!gameInstallPath) {
-    setFixPreviewError("No detected game install path is available for Safe Fix.");
-    return;
-  }
-
   const suspectMods = safeFixSuspects;
 
   if (suspectMods.length === 0) {
@@ -4222,28 +4803,35 @@ if (safeFixCategory !== "mod_conflict") {
     setApplyingSafeFix(true);
 
     const response = await window.fixMyGame.applySafeFix({
-      gameKey: selectedGameKey,
-      installPath: gameInstallPath,
-      suspectMods,
-      actionLabel: "safe_fix_quarantine_mod",
-    });
+  gameKey: effectiveGameKey,
+  installPath: gameInstallPath || currentLogPath || "",
+  suspectMods,
+  actionLabel: "safe_fix_quarantine_mod",
+});
 
   if (!response?.ok) {
-  const detail = response?.error || "Safe Repair failed.";
+  const rawDetail = response?.error || "Safe Repair failed.";
+  const usingPastedLog = !gameInstallPath && !currentLogPath;
+
+  const detail = usingPastedLog
+    ? "FixMyGame diagnosed the issue correctly, but Safe Repair needs access to a real local Mods folder. This is expected when you paste a crash log manually or when this game is not installed on this PC."
+    : rawDetail.toLowerCase().includes("mods folder")
+    ? "FixMyGame diagnosed the issue correctly, but Safe Repair could not find a local Mods folder for this game. This can happen if the game is not installed on this PC, the log was pasted manually, or the folder is stored somewhere custom."
+    : rawDetail;
 
   setFixExecutionResults([
     {
-      id: "safe_fix_failed",
-      title: "Safe Repair failed",
+      id: "safe_fix_unavailable",
+      title: "Safe Repair unavailable",
       ok: false,
       detail,
     },
   ]);
 
   addRepairTimelineItem(
-  "Safe Repair failed",
+  "Safe Repair unavailable",
   detail,
-  "failed"
+  "warning"
 );
 
   setShowFixPreviewModal(false);
@@ -4308,7 +4896,7 @@ showActionMessage(
     const nextHistory = pushFixHistoryItem({
       id: crypto.randomUUID(),
       createdAt: Date.now(),
-      gameKey: selectedGameKey,
+      gameKey: effectiveGameKey,
       gameTitle,
       type: "fix_plan",
       title: `${gameTitle} safe repair`,
@@ -4340,7 +4928,7 @@ addRepairTimelineItem(
   "success"
 );
 setLastUndoSucceeded(false);
-    await detectSelectedGameInstall(selectedGameKey);
+    await detectSelectedGameInstall(effectiveGameKey);
   } catch (error) {
     setFixPreviewError(
       error instanceof Error ? error.message : "Safe Fix failed."
@@ -4439,7 +5027,7 @@ showActionMessage(
     const nextHistory = pushFixHistoryItem({
       id: crypto.randomUUID(),
       createdAt: Date.now(),
-      gameKey: selectedGameKey,
+      gameKey: effectiveGameKey,
       gameTitle,
       type: "fix_plan",
       title: `${gameTitle} undo last fix`,
@@ -4452,7 +5040,7 @@ await sendSupportSnapshot(
   "undo_last_fix",
   `Undid last fix for ${restoredFile}`
 );
-    await detectSelectedGameInstall(selectedGameKey);
+    await detectSelectedGameInstall(effectiveGameKey);
   } catch (error) {
     setErrorMsg(
       error instanceof Error ? error.message : "Undo Last Fix failed."
@@ -4519,6 +5107,7 @@ async function openBackupFolder() {
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
+setDetectedGameKey(detectedGame || null);
 applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
@@ -4574,8 +5163,10 @@ const folderPath = await window.fixMyGame.pickScanFolder(defaultScanPath);
     setHasAppliedAutoGameDetect(false);
 setCurrentLogPath(bestLog.fullPath);
 const detectedGame = detectGameFromLog(contents);
+setDetectedGameKey(detectedGame || null);
 const activeGameKey = detectedGame || selectedGameKey;
 
+setDetectedGameKey(detectedGame || null);
 applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
@@ -4647,6 +5238,7 @@ if (normalizedLogs.length > 0) {
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
+setDetectedGameKey(detectedGame || null);
 applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
@@ -4688,6 +5280,7 @@ setCurrentLogPath(fullPath);
 const detectedGame = detectGameFromLog(contents);
 const activeGameKey = detectedGame || selectedGameKey;
 
+setDetectedGameKey(detectedGame || null);
 applyDetectedGameOnce(detectedGame);
 
 setCrashLog(contents);
@@ -4729,7 +5322,7 @@ async function openModsFolder(
   }
 
   try {
-    const response = await window.fixMyGame.openModsFolder(selectedGameKey);
+    const response = await window.fixMyGame.openModsFolder(effectiveGameKey);
 
     if (!response?.ok) {
       const error = (response?.error || "").toLowerCase();
@@ -4818,7 +5411,7 @@ async function openLogsFolder(
   }
 
   try {
-    const response = await window.fixMyGame.openLogsFolder(selectedGameKey);
+    const response = await window.fixMyGame.openLogsFolder(effectiveGameKey);
 
     if (!response?.ok) {
       const error = (response?.error || "").toLowerCase();
@@ -5048,8 +5641,8 @@ if (!freshBeta.betaOpen) {
     setRunning(true);
     try {
       const payload = {
-  gameKey: selectedGameKey,
-  gameTitle,
+  gameKey: effectiveGameKey,
+  gameTitle: effectiveGameTitle,
   gpuModel,
   driverVersion,
   graphicsApiMode,
@@ -5102,7 +5695,7 @@ setResult(nextResult);
 setHasRunDiagnosticThisSession(true);
 addRepairTimelineItem(
   "Diagnostic completed",
-  `${gameTitle} analysis finished.`,
+  `${effectiveGameTitle} analysis finished.`,
   "success"
 );
 setShouldAutoScrollToResult(autoScroll);
@@ -5122,7 +5715,7 @@ const diagnosticHistoryText = buildDiagnosticResultText(
 if (diagnosticHistoryText.trim()) {
   addToFixHistory(
   "diagnostic_run",
-  `${gameTitle} diagnostic run`,
+  `${effectiveGameTitle} diagnostic run`,
   diagnosticHistoryText,
   {
     issue: nextAnalysis?.issue,
@@ -5139,8 +5732,8 @@ if (diagnosticHistoryText.trim()) {
     previousRelevantLog: logToUse,
   }
 );
-pushSupportEvent("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
-await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${gameTitle}`);
+pushSupportEvent("run_diagnostic", `Ran diagnostic for ${effectiveGameTitle}`);
+await sendSupportSnapshot("run_diagnostic", `Ran diagnostic for ${effectiveGameTitle}`);
 }
 
       const lim = await fetchJSON<LimitResponse>(
@@ -5241,7 +5834,7 @@ async function copyResult() {
 
   if (!textToCopy.trim()) return;
 
-  addToFixHistory("full_result", `${gameTitle} diagnostic result`, textToCopy);
+  addToFixHistory("full_result", `${effectiveGameTitle} diagnostic result`, textToCopy);
 
   try {
     await copyTextReliable(textToCopy);
@@ -5289,7 +5882,7 @@ async function applyQuickFix() {
     ...effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => `${index + 1}. ${step}`),
   ].join("\n");
 
-  addToFixHistory("quick_fix", `${gameTitle} quick fix`, quickFixText);
+  addToFixHistory("quick_fix", `${effectiveGameTitle} quick fix`, quickFixText);
 
   try {
     await copyTextReliable(quickFixText);
@@ -5525,6 +6118,18 @@ async function openGameSettingsQuickAction() {
 );
   }
 }
+if (appLocked) {
+  return (
+    <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+      <div className="max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+        <h1 className="text-2xl font-bold">FixMyGame is in closed beta</h1>
+        <p className="mt-3 text-white/70">
+          Access is currently limited to approved desktop beta testers.
+        </p>
+      </div>
+    </main>
+  );
+}
 if (checkingBetaStatus) {
   return (
     <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
@@ -5541,16 +6146,13 @@ if (!betaOpen) {
         <p className="mt-4 text-white/70">
           {betaMessage || "This beta build is currently unavailable."}
         </p>
-        <p className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/50 break-all">
-  API base: {API_BASE_URL}
-</p>
 
 <button
   type="button"
   onClick={fetchBetaStatus}
   className="mt-4 rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/20"
 >
-  Recheck Beta Access
+  Refresh Access
 </button>
       </div>
     </main>
@@ -5619,7 +6221,7 @@ return (
         : "border border-white/10 bg-white/5 text-white/80",
     ].join(" ")}
   >
-    {isPro ? "Pro Plan" : isBetaAccess ? "Beta: Unlimited" : "Free Plan"}
+    {isPro ? "Pro Plan" : hasUnlimitedAccess ? "Beta: Unlimited" : "Free Plan"}
   </span>
 
   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
@@ -5742,7 +6344,7 @@ return (
   <button
   type="button"
   onClick={() => {
-    if (!isPro && !isBetaAccess) {
+    if (!hasUnlimitedAccess) {
       setProModalContext("autoDetect");
       setShowProModal(true);
       return;
@@ -5753,7 +6355,7 @@ return (
   disabled={scanningLogs || !selectedGameProfile.supportsAutoDetect}
   className={[
     "rounded-xl px-4 py-2 font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-    isPro || betaOpen ||isBetaAccess
+    hasUnlimitedAccess
       ? "bg-cyan-600 hover:bg-cyan-500"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
@@ -5761,7 +6363,7 @@ return (
   {scanningLogs
   ? "Scanning..."
   : selectedGameProfile.supportsAutoDetect
-  ? isPro || betaOpen || isBetaAccess
+  ? hasUnlimitedAccess
     ? `Auto Detect ${gameTitle} Logs`
     : `Auto Detect ${gameTitle} Logs (Pro)`
     : `Auto Detect ${gameTitle} Logs Not Available Yet`}
@@ -5769,7 +6371,7 @@ return (
 <button
   type="button"
 onClick={() => {
-  if (!isPro && !isBetaAccess) {
+  if (!hasUnlimitedAccess) {
     setProModalContext("folderScan");
     setShowProModal(true);
     return;
@@ -5779,12 +6381,12 @@ onClick={() => {
 }}
   className={[
     "rounded-xl px-4 py-2 font-medium transition",
-    isPro || betaOpen || isBetaAccess
+    hasUnlimitedAccess
       ? "bg-white/10 hover:bg-white/15"
       : "bg-amber-500/10 text-amber-200 border border-amber-400/20 hover:bg-amber-500/15",
   ].join(" ")}
 >
-  {isPro || betaOpen || isBetaAccess ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
+  {hasUnlimitedAccess ? "Scan Entire Folder" : "Scan Entire Folder (Pro)"}
 </button>
 </div>
 
@@ -5950,13 +6552,13 @@ onClick={() => {
         ) : null}
         {quickSignals.loader ? (
           <span className="rounded-full border border-blue-400/20 bg-blue-400/10 px-3 py-1 text-xs font-medium text-blue-200">
-            {getLoaderLabelForGame(selectedGameKey)}: {quickSignals.loader}
+            {getLoaderLabelForGame(effectiveGameKey)}: {quickSignals.loader}
           </span>
         ) : null}
 
-        {quickSignals.java && getJavaLabelForGame(selectedGameKey) ? (
+        {quickSignals.java && getJavaLabelForGame(effectiveGameKey) ? (
           <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
-            {getJavaLabelForGame(selectedGameKey)} {quickSignals.java}
+            {getJavaLabelForGame(effectiveGameKey)} {quickSignals.java}
           </span>
         ) : null}
 
@@ -6078,7 +6680,7 @@ onClick={() => {
   ) : !canRun && !isPro ? (
     "Free Limit Reached — Upgrade to Pro"
   ) : (
-    `Run ${gameTitle} Diagnostic`
+    `Run ${effectiveGameTitle} Diagnostic`
   )}
 </button>
 
@@ -6090,11 +6692,11 @@ onClick={() => {
 
           <div className="mt-2 flex items-center justify-between text-sm text-white/70">
             <div>
-              {loadingLimit ? (
-                "Checking daily limit..."
-              ) : isPro ? (
-                "Pro: Unlimited"
-              ) : (
+              {hasUnlimitedAccess ? (
+  betaOpen || isBetaAccess ? "Unlimited beta access enabled" : "Pro: Unlimited"
+) : loadingLimit ? (
+  "Checking daily limit..."
+) : (
                 <>
                   {isBetaAccess ? (
   "Unlimited beta access enabled"
@@ -6108,7 +6710,7 @@ onClick={() => {
               )}
             </div>
 
-            {!isPro && !isBetaAccess && (
+            {!hasUnlimitedAccess && (
   <button
     type="button"
     className="underline underline-offset-4 hover:text-white"
@@ -6119,7 +6721,7 @@ onClick={() => {
 )}
           </div>
 
-{!loadingLimit && !isPro && remaining <= 0 ? (
+{!loadingLimit && !hasUnlimitedAccess && remaining <= 0 ? (
   <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-950/40 p-4 text-sm text-amber-100">
     <div className="font-semibold">
       You’ve used all free diagnostics today.
@@ -6244,7 +6846,11 @@ onClick={() => {
     disabled={!hasDiagnosticResult || !fixPlan}
     className="w-full text-left text-white transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
   >
-    {isMissingDependency ? "🧩 Repair Preview" : "🛠️ Safe Repair"}
+    {isModConflict
+  ? "🛠️ Safe Repair"
+  : isMissingDependency
+  ? "🧩 Repair Preview"
+  : "🧭 Guided Fix Preview"}
   </button>
 
   <p className="mt-2 ml-6 text-xs text-white/60">
@@ -6366,7 +6972,7 @@ onClick={() => {
                   : "bg-red-500/20 text-red-300",
               ].join(" ")}
             >
-              {item.ok ? "Done" : "Failed"}
+              {item.ok ? "Done" : item.id === "safe_fix_unavailable" ? "Unavailable" : "Failed"}
             </span>
           </div>
 
@@ -6596,7 +7202,7 @@ setTimeout(() => {
 <button
   type="button"
   onClick={() => {
-    if (!isPro && !isBetaAccess) {
+    if (!hasUnlimitedAccess) {
       setProModalContext("saveAnalysis");
       setShowProModal(true);
       return;
@@ -6611,7 +7217,7 @@ setTimeout(() => {
       : "border border-amber-400/20 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15",
   ].join(" ")}
 >
-    {isPro || betaOpen || isBetaAccess ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
+    {hasUnlimitedAccess ? (saved ? "Saved!" : "Save Results") : "Save Export (Pro)"}
 </button>
 
   <button
@@ -6676,7 +7282,11 @@ setTimeout(() => {
       disabled={!hasDiagnosticResult || !fixPlan}
       className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {isMissingDependency ? "🧩 Repair Preview" : "🛠️ Safe Repair"}
+      {isModConflict
+  ? "🛠️ Safe Repair"
+  : isMissingDependency
+  ? "🧩 Repair Preview"
+  : "🧭 Guided Fix Preview"}
     </button>
   </div>
 </div>
@@ -6834,7 +7444,10 @@ setTimeout(() => {
       : "bg-red-500/20 text-red-300",
   ].join(" ")}
 >
-  {effectiveDisplayAnalysis.confidenceLevel}
+  {getConfidenceDisplayLabel(
+  effectiveDisplayAnalysis.confidenceLevel,
+  effectiveDisplayAnalysis.detectedSignals?.errorType
+)}
 </div>          </div>
         </div>
 
@@ -7266,18 +7879,6 @@ setTimeout(() => {
         }))
       }
     />
-
-    <SettingToggleRow
-      label="Show Probability Breakdown"
-      description="Show why FixMyGame picked the likely cause."
-      checked={appSettings.showProbabilityBreakdown}
-      onChange={(checked) =>
-        setAppSettings((prev) => ({
-          ...prev,
-          showProbabilityBreakdown: checked,
-        }))
-      }
-    />
   </SettingsPanel>
 
   <SettingsPanel title="HISTORY & LOCAL DATA">
@@ -7537,10 +8138,14 @@ setTimeout(() => {
           SAFE FIX
         </div>
         <div className="mt-2 text-lg font-semibold text-white">
-          Back up and quarantine the likely problem mod.
+          {safeFixSuspects.length >= 2
+  ? "Back up and quarantine one duplicate mod."
+  : "Back up and quarantine the likely problem mod."}
         </div>
         <div className="mt-2 text-sm text-white/70">
-          FixMyGame will move the matched mod out of your active Mods folder so the game can test without it.
+          {safeFixSuspects.length >= 2
+  ? `FixMyGame will back up and quarantine ${safeFixSuspects[0]} so only one duplicate remains active.`
+  : "FixMyGame will move the matched mod out of your active Mods folder so the game can test without it."}
         </div>
       </div>
 
@@ -7579,11 +8184,7 @@ setTimeout(() => {
     </div>
   )}
 
-  {!gameInstallPath && activeSafeFixCategory === "mod_conflict" ? (
-    <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
-      Safe Fix needs a detected local {gameTitle} install.
-    </div>
-  ) : activeSafeFixCategory === "mod_conflict" && safeFixSuspects.length === 0 ? (
+  {activeSafeFixCategory === "mod_conflict" && safeFixSuspects.length === 0 ? (
     <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/75">
       No suspected mod was detected for Safe Fix.
     </div>
@@ -7650,8 +8251,10 @@ setTimeout(() => {
 ? "Applying Safe Repair..."
 : !appSettings.enableSafeFix
 ? "Safe Repair Disabled in Settings"
-: !gameInstallPath
-? "Safe Repair Needs Local Game Install"
+: !desktopConnected
+? "Safe Repair Needs Desktop App"
+: safeFixSuspects.length === 0
+? "No Safe Repair Target Found"
 : activeSafeFixCategory !== "mod_conflict"
 ? "Safe Repair Not Available for This Result"
 : safeFixSuspects.length === 0

@@ -9,14 +9,31 @@ const isDev = !app.isPackaged;
 const os = require("os");
 const { autoUpdater } = require("electron-updater");
 
-app.whenReady().then(() => {
-  autoUpdater.checkForUpdatesAndNotify();
-});
-autoUpdater.on("update-available", () => {
-  console.log("Update available");
+autoUpdater.on("checking-for-update", () => {
+  console.log("[Updater] Checking for update...");
 });
 
-autoUpdater.on("update-downloaded", () => {
+autoUpdater.on("update-available", (info) => {
+  console.log("[Updater] Update available:", info.version);
+});
+
+autoUpdater.on("update-not-available", () => {
+  console.log("[Updater] No updates available.");
+});
+
+autoUpdater.on("error", (err) => {
+  console.error("[Updater] Error:", err);
+});
+
+autoUpdater.on("download-progress", (progress) => {
+  console.log(
+    `[Updater] Downloading ${Math.round(progress.percent)}%`
+  );
+});
+
+autoUpdater.on("update-downloaded", (info) => {
+  console.log("[Updater] Update downloaded:", info.version);
+  writeStartupLog("[Updater] Update downloaded:", info.version);
   autoUpdater.quitAndInstall();
 });
 
@@ -282,6 +299,18 @@ function getModsFolderForGame(gameKey) {
       );
       break;
 
+    case "stellaris":
+  candidates.push(
+    path.join(documents, "Paradox Interactive", "Stellaris", "mod")
+  );
+
+  for (const steamCommon of steamCommonPaths) {
+    candidates.push(
+      path.join(steamCommon, "Stellaris", "mod")
+    );
+  }
+  break;
+
     case "project_zomboid":
       candidates.push(
         path.join(home, "Zomboid", "mods")
@@ -432,6 +461,19 @@ function getLogsFolderForGame(gameKey) {
     case "baldurs_gate_3":
       candidates.push(path.join(localAppData, "Larian Studios", "Baldur's Gate 3"));
       break;
+
+      case "stellaris":
+  candidates.push(
+    path.join(documents, "Paradox Interactive", "Stellaris", "logs"),
+    path.join(documents, "Paradox Interactive", "Stellaris", "crashes")
+  );
+
+  for (const steamCommon of steamCommonPaths) {
+    candidates.push(
+      path.join(steamCommon, "Stellaris", "logs")
+    );
+  }
+  break;
 
       case "project_zomboid":
         candidates.push(
@@ -705,6 +747,11 @@ function getCandidateInstallPaths(gameKey) {
       path.join(localAppData, "Low", "Ludeon Studios", "RimWorld by Ludeon Studios"),
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "RimWorld"),
     ],
+    stellaris: [
+  path.join(documents, "Paradox Interactive", "Stellaris"),
+  path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "Stellaris"),
+  path.join("C:\\", "Program Files", "Steam", "steamapps", "common", "Stellaris"),
+],
     project_zomboid: [
       path.join(home, "Zomboid"),
       path.join("C:\\", "Program Files (x86)", "Steam", "steamapps", "common", "ProjectZomboid"),
@@ -1546,14 +1593,17 @@ ipcMain.handle("apply-safe-fix", async (_event, payload) => {
       actionLabel = "quarantine_suspected_mod",
     } = payload || {};
 
-    if (!installPath) {
-      return {
-        ok: false,
-        error: "No install path was provided.",
-      };
-    }
+    const directModsFolder = getModsFolderForGame(gameKey);
+const modsFolder =
+  directModsFolder ||
+  resolveModsFolderFromInstallPath(gameKey, installPath);
 
-    const modsFolder = resolveModsFolderFromInstallPath(gameKey, installPath);
+if (!modsFolder || !fs.existsSync(modsFolder)) {
+  return {
+    ok: false,
+    error: "Mods folder was not found for this game instance.",
+  };
+}
     if (!modsFolder || !fs.existsSync(modsFolder)) {
       return {
         ok: false,
@@ -1680,6 +1730,13 @@ app.whenReady().then(async () => {
 
     createWindow();
 
+    if (app.isPackaged) {
+  autoUpdater.checkForUpdatesAndNotify().catch((error) => {
+    writeStartupLog("Auto update check failed:", error?.message || error);
+  });
+} else {
+  writeStartupLog("Auto updates skipped in dev mode.");
+}
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
