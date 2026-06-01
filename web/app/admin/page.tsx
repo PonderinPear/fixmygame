@@ -58,6 +58,25 @@ export default function AdminPage() {
     }
   }
 
+  function getSnapshotStyle(snap: Snapshot) {
+  const source =
+    snap.vid === "PUT_YOUR_VID_HERE"
+      ? "owner"
+      : snap.vid
+      ? "beta"
+      : "unknown";
+
+  if (source === "owner") {
+    return "relative overflow-hidden rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/[0.07] p-4 shadow-[0_0_24px_rgba(217,70,239,0.10)] before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-fuchsia-400";
+  }
+
+  if (source === "beta") {
+    return "relative overflow-hidden rounded-2xl border border-cyan-400/25 bg-cyan-400/[0.055] p-4 shadow-[0_0_24px_rgba(34,211,238,0.08)] before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-cyan-400";
+  }
+
+  return "relative overflow-hidden rounded-2xl border border-white/10 bg-black/30 p-4 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-white/10";
+}
+
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <div className="mx-auto max-w-6xl">
@@ -149,7 +168,7 @@ export default function AdminPage() {
 
           <div className="mt-4 grid gap-3">
             {snapshots.map((snap) => (
-              <div key={snap.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              <div key={snap.id} className={getSnapshotStyle(snap)}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="text-sm text-cyan-200">
