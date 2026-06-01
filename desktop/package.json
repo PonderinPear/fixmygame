@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "FixMyGame desktop app",
   "main": "main.js",
   "author": "",
@@ -58,11 +58,12 @@
       "shortcutName": "FixMyGame"
     },
     "publish": [
-      {
-        "provider": "github",
-        "owner": "PonderinPear",
-        "repo": "fixmygame"
-      }
-    ]
+  {
+    "provider": "github",
+    "owner": "PonderinPear",
+    "repo": "fixmygame",
+    "releaseType": "release"
+  }
+]
   }
 }
