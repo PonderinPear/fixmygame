@@ -60,7 +60,7 @@ export default function AdminPage() {
 
   function getSnapshotStyle(snap: Snapshot) {
   const source =
-    snap.vid === "PUT_YOUR_VID_HERE"
+    snap.vid === "08a5473-d92c-4024-8532-955777061ba"
       ? "owner"
       : snap.vid
       ? "beta"
