@@ -39,7 +39,13 @@ export async function POST(req: Request) {
       id,
       routeVersion: "v2-diagnostic-mapping",
 
-      vid: body?.vid || "unknown",
+      vid:
+  req.headers.get("x-fmg-device-id") ||
+  body?.vid ||
+  body?.deviceId ||
+  body?.system?.vid ||
+  body?.system?.deviceId ||
+  "unknown",
       sessionId: body?.sessionId || "unknown_session",
 
       game: body?.game?.key || "unknown",
@@ -66,10 +72,10 @@ export async function POST(req: Request) {
       raw: body,
     };
 
-    await redis.set(`snapshot:${id}`, snapshot);
+    await redis.set(`snapshot:${snapshot.id}`, snapshot)
 
     return NextResponse.json(
-      { ok: true, id },
+      { ok: true, id: snapshot.id },
       { headers: corsHeaders }
     );
   } catch (error) {

@@ -5578,11 +5578,33 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
       eventDetail,
     });
 
-  const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
+const snapshotVid = (() => {
+  if (typeof window === "undefined") return "unknown";
+
+  const existing = window.localStorage.getItem("fmg-device-id");
+  if (existing) return existing;
+
+  const created =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `fmg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  window.localStorage.setItem("fmg-device-id", created);
+  return created;
+})();
+
+const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
   `${API_BASE_URL}/api/support-snapshot`,
   {
     method: "POST",
-    body: JSON.stringify(snapshot),
+    headers: {
+      "Content-Type": "application/json",
+      "x-fmg-device-id": snapshotVid,
+    },
+    body: JSON.stringify({
+      ...snapshot,
+      vid: snapshotVid,
+    }),
   }
 );
 
