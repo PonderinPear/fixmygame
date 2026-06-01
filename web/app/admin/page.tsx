@@ -174,6 +174,9 @@ export default function AdminPage() {
                     <div className="text-sm text-cyan-200">
                       {snap.gameTitle || snap.game || "Unknown Game"}
                     </div>
+                    <div className="text-xs text-yellow-300">
+                      VID: {snap.vid || "NO VID"}
+                    </div>
                     <div className="mt-1 text-lg font-bold">
                       {snap.issue || "Unknown issue"}
                     </div>
