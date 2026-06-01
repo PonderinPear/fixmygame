@@ -173,9 +173,13 @@ export default function AdminPage() {
                     <div className="text-sm text-cyan-200">
                       {snap.gameTitle || snap.game || "Unknown Game"}
                     </div>
-                    <div className="text-xs text-yellow-300">
-                      VID: {snap.vid || "NO VID"}
-                    </div>
+                    <div className="mt-1 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60">
+  {snap.vid === "08a45473-d92c-4024-8532-955f777061ba"
+    ? "Owner test"
+    : snap.vid && snap.vid !== "unknown"
+    ? "Beta user"
+    : "Unknown source"}
+</div>
                     <div className="mt-1 text-lg font-bold">
                       {snap.issue || "Unknown issue"}
                     </div>
