@@ -164,9 +164,7 @@ export default function AdminPage() {
         </div>
 
         <section className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-5">
-          <h2 className="font-bold text-red-500">
-  Recent Snapshots TEST 123
-</h2>
+     <h2 className="font-bold">Recent Snapshots</h2>
           <div className="mt-4 grid gap-3">
             {snapshots.map((snap) => (
               <div key={snap.id} className={getSnapshotStyle(snap)}>
