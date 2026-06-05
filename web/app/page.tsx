@@ -262,6 +262,7 @@ type AppSettings = {
   createBackupBeforeFix: boolean;
   autoDetectGames: boolean;
   rememberLastGamePath: boolean;
+  autoScrollToResults: boolean;
   showAdvancedDetails: boolean;
   highlightSuspiciousLine: boolean;
   showProbabilityBreakdown: boolean;
@@ -274,6 +275,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   createBackupBeforeFix: true,
   autoDetectGames: true,
   rememberLastGamePath: true,
+  autoScrollToResults: true,
   showAdvancedDetails: true,
   highlightSuspiciousLine: true,
   showProbabilityBreakdown: true,
@@ -453,7 +455,7 @@ function getFixPlanDescription(
 ) {
   if (category === "missing_dependency") {
   if (missingModAlreadyInstalled) {
-    return "FixMyGame found the dependency in your Mods folder. This usually means the loaded log is old, or the mod was restored after the log was created.";
+    return "The loaded log reported a missing dependency, but FixMyGame found it already installed on this device. The log may be old, so run the game again and use a fresh log if the issue continues.";
   }
 
   return "FixMyGame found a missing required mod or dependency. Use the download button to open the correct mod page, then install it into your Mods folder.";
@@ -597,6 +599,21 @@ const stardewSkippedEmptyFolderMod =
         ? `Remove this folder: ${stardewBrokenFolderPath}`
         : `Remove the empty folder named ${badFolder} from your Stardew Valley Mods folder.`,
       "This is not a game crash, but cleaning it up will make the log clearer.",
+    ],
+  };
+}
+
+if (category === "loader_mismatch") {
+  const leadMod = mods[0] || "the skipped Stardew mod";
+
+  return {
+    title: "SMAPI version mismatch",
+    bullets: [
+      `${leadMod} was skipped because it requires a different SMAPI version.`,
+      "Update SMAPI to the latest stable version.",
+      `If ${leadMod} still asks for an unavailable SMAPI version, remove it or install a compatible version.`,
+      "Launch Stardew Valley again so SMAPI creates a fresh log.",
+      "Run FixMyGame again with the fresh log.",
     ],
   };
 }
@@ -1123,7 +1140,7 @@ if (category === "no_clear_issue_found") {
     ],
   };
 
-    case "gpu_driver_issue":
+        case "gpu_driver_issue":
       return {
         title: "GPU or driver issue detected",
         bullets: [
@@ -1136,22 +1153,30 @@ if (category === "no_clear_issue_found") {
 
     case "mod_conflict":
       return {
-        title: mods.length >= 2
-  ? "Duplicate mod conflict detected"
-  : "Mod conflict likely",
+        title:
+          mods.length >= 2
+            ? "Duplicate mod conflict detected"
+            : "Mod conflict likely",
         bullets: [
-  mods.length >= 2
-    ? `Likely conflict between: ${mods[0]} ↔ ${mods[1]}`
-    : mods.length === 1
-    ? `Start by testing without ${mods[0]}.`
-    : "Start by disabling the most recently added or updated mod.",
-  "Re-enable mods one at a time until the crash returns.",
-  gameKey === "minecraft"
-  ? "Check that all mods match your Minecraft and loader version."
-  : `Check that all mods match your ${GAME_PROFILES[gameKey]?.label || "game"} version.`,
-  "Watch for duplicate libraries or overlapping performance mods.",
-],
+          mods.length >= 2
+            ? `Likely conflict between: ${mods[0]} ↔ ${mods[1]}`
+            : mods.length === 1
+            ? `Start by testing without ${mods[0]}.`
+            : "Start by disabling the most recently added or updated mod.",
+          "Re-enable mods one at a time until the crash returns.",
+          gameKey === "minecraft"
+            ? "Check that all mods match your Minecraft and loader version."
+            : gameKey === "stellaris"
+            ? "Check that all mods match your Stellaris version."
+            : gameKey === "stardew"
+            ? "Check that all mods match your Stardew Valley version."
+            : gameKey === "sims4"
+            ? "Check that all mods match your The Sims 4 version."
+            : "Check that all mods match your game version.",
+          "Watch for duplicate libraries or overlapping performance mods.",
+        ],
       };
+
     case "no_clear_issue_found":
       return {
         title: "No clear issue found in this log",
@@ -1164,6 +1189,32 @@ if (category === "no_clear_issue_found") {
       };
 
     default:
+      if (analysis?.detectedSignals?.likelyCategory === "wrong_file_loaded") {
+        const selectedGameLabel =
+          gameKey === "stellaris"
+            ? "Stellaris"
+            : gameKey === "minecraft"
+            ? "Minecraft"
+            : gameKey === "stardew"
+            ? "Stardew Valley"
+            : gameKey === "sims4"
+            ? "The Sims 4"
+            : "the game";
+
+        return {
+          title: "Wrong file loaded",
+          bullets: [
+            analysis?.quickFixFirst ||
+              `This looks like a cache/settings/data file, not a ${selectedGameLabel} crash log.`,
+            `Reproduce the crash or issue in ${selectedGameLabel}.`,
+            `Open the ${selectedGameLabel} crash/error/log folder.`,
+            "Sort the folder by Date Modified.",
+            "Choose the newest crash, error, or player log created right after the issue happened.",
+            "Run FixMyGame again with that newer log.",
+          ],
+        };
+      }
+
       return {
         title: "General fix path",
         bullets: [
@@ -1175,7 +1226,6 @@ if (category === "no_clear_issue_found") {
           "Retest after each single change so you can isolate the issue.",
         ],
       };
-      
   }
 }
 
@@ -1224,6 +1274,81 @@ function buildSmartFixResultOverride({
     "";
 
   const lowerCrashLog = String(crashLog || "").toLowerCase();
+
+  const trimmedCrashLog = String(crashLog || "").trim();
+
+const looksLikeJsonDataFile =
+  (trimmedCrashLog.startsWith("{") && trimmedCrashLog.endsWith("}")) ||
+  (trimmedCrashLog.startsWith("[") && trimmedCrashLog.endsWith("]"));
+
+const hasCrashOrErrorLanguage =
+  lowerCrashLog.includes("crash") ||
+  lowerCrashLog.includes("exception") ||
+  lowerCrashLog.includes("fatal") ||
+  lowerCrashLog.includes("error") ||
+  lowerCrashLog.includes("failed") ||
+  lowerCrashLog.includes("stack trace") ||
+  lowerCrashLog.includes("traceback") ||
+  lowerCrashLog.includes("mod_manager.cpp") ||
+  lowerCrashLog.includes("gamestate.cpp") ||
+  lowerCrashLog.includes("pdx_audio.cpp") ||
+  lowerCrashLog.includes("could not resolve mod dependency chain") ||
+  lowerCrashLog.includes("duplicate mod detected");
+
+const looksLikeCacheOrSettingsData =
+  looksLikeJsonDataFile &&
+  !hasCrashOrErrorLanguage &&
+  (
+    lowerCrashLog.includes("last_updated") ||
+    lowerCrashLog.includes("timestamp") ||
+    lowerCrashLog.includes("activity") ||
+    lowerCrashLog.includes("claimable_count") ||
+    lowerCrashLog.includes("login_history_player_name") ||
+    lowerCrashLog.includes("history_player_name_list") ||
+    lowerCrashLog.includes("is_need_history_player_name")
+  );
+
+if (looksLikeCacheOrSettingsData) {
+  const selectedGameLabel =
+    gameKey === "stellaris"
+      ? "Stellaris"
+      : gameKey === "custom"
+      ? "Custom / Other"
+      : "the selected game";
+
+  return {
+    quickFixFirst:
+      `This looks like a cache/settings/data file, not a ${selectedGameLabel} crash log.`,
+    issue:
+      `FixMyGame was given a cache/settings/data file instead of a ${selectedGameLabel} crash or error log.`,
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      "95% - Wrong file loaded / cache or settings data",
+      "5% - Incomplete log missing crash lines",
+    ],
+    mostLikelyCause:
+      "The file appears to contain saved player, activity, cache, or settings data instead of crash/error output. FixMyGame cannot diagnose the actual crash from this file.",
+    recommendedFixSteps: [
+      `Reproduce the crash or issue in ${selectedGameLabel}.`,
+      `Open the ${selectedGameLabel} crash/error/log folder.`,
+      "Sort the folder by Date Modified.",
+      "Choose the newest crash, error, or player log created right after the issue happened.",
+      "Run FixMyGame again with that newer log.",
+    ],
+    needMoreInfo:
+      "FixMyGame needs a real crash or error log created immediately after the problem happens, not a cache/settings/data file.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      likelyCategory: "wrong_file_loaded",
+      errorType: "CacheSettingsDataFile",
+      advisoryLevel: "important",
+      advisoryTitle: "Wrong file loaded",
+      advisoryMessage:
+        "This file looks like cache/settings/data instead of a crash or error log.",
+      suspectedMods: [],
+    },
+  };
+}
 
   const looksLikeParadoxStellarisLog =
   lowerCrashLog.includes("pdx_audio.cpp") ||
@@ -1372,6 +1497,61 @@ if (looksLikeLethalCompanyManifest) {
       advisoryTitle: "Manifest uploaded instead of crash log",
       advisoryMessage:
         "This file lists modpack dependencies, but it is not the crash log FixMyGame needs.",
+    },
+  };
+}
+
+const stardewSmapiVersionMismatchMatch =
+  gameKey === "stardew_valley"
+    ? crashLog.match(
+        /-\s*([A-Za-z0-9 _.'\-\[\]]+?)\s+\d+(?:\.\d+)*\s+because it needs SMAPI\s+([0-9.]+)\s+or later/i
+      ) ||
+      crashLog.match(
+        /([A-Za-z0-9 _.'\-\[\]]+?)\s+\(from Mods\\[^)]*\)[\s\S]*?Failed:\s+it needs SMAPI\s+([0-9.]+)\s+or later/i
+      )
+    : null;
+
+if (gameKey === "stardew_valley" && stardewSmapiVersionMismatchMatch) {
+  const brokenMod = stardewSmapiVersionMismatchMatch[1]?.trim() || "the skipped mod";
+  const requiredSmapi = stardewSmapiVersionMismatchMatch[2]?.trim() || "a newer SMAPI version";
+
+  const looksUnrealisticSmapi =
+    Number(requiredSmapi.split(".")[0]) >= 10;
+
+  return {
+    quickFixFirst: looksUnrealisticSmapi
+      ? `${brokenMod} requires SMAPI ${requiredSmapi} or later, which looks unrealistic. Remove ${brokenMod} or install a compatible version.`
+      : `${brokenMod} needs SMAPI ${requiredSmapi} or later. Update SMAPI or use a compatible version of the mod.`,
+    issue: `${brokenMod} was skipped because it requires SMAPI ${requiredSmapi} or later.`,
+    confidenceLevel: "High",
+    probabilityBreakdown: [
+      `100% - ${brokenMod} requires SMAPI ${requiredSmapi} or later`,
+    ],
+    mostLikelyCause: looksUnrealisticSmapi
+      ? `${brokenMod} appears to require an unrealistic or future SMAPI version, so this mod is probably broken, fake, misconfigured, or not compatible with the current Stardew/SMAPI setup.`
+      : `${brokenMod} requires a newer SMAPI version than the one currently installed.`,
+    recommendedFixSteps: looksUnrealisticSmapi
+      ? [
+          `Remove ${brokenMod} from your Stardew Valley Mods folder.`,
+          `Install a compatible version of ${brokenMod} if one exists.`,
+          "Launch Stardew Valley again so SMAPI creates a fresh log.",
+          "Run FixMyGame again with the fresh log.",
+        ]
+      : [
+          "Update SMAPI to the latest stable version.",
+          `If ${brokenMod} still requires a newer unavailable SMAPI version, remove it or install a compatible version.`,
+          "Launch Stardew Valley again so SMAPI creates a fresh log.",
+          "Run FixMyGame again with the fresh log.",
+        ],
+    needMoreInfo:
+      "No more info is needed unless the game still fails after removing or replacing the skipped mod.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType: "SmapiVersionMismatch",
+      loader: "SMAPI",
+      gameVersion: "",
+      suspectedMods: [brokenMod],
+      likelyCategory: "loader_mismatch",
     },
   };
 }
@@ -2630,13 +2810,21 @@ function detectGameFromLog(log: string): string | null {
   const lower = log.toLowerCase();
 
   if (
-  lower.includes("bepinex") ||
   lower.includes("lethal company") ||
+  lower.includes("lethalcompany") ||
+  lower.includes("\\lethal company\\") ||
+  lower.includes("\\lethalcompany\\") ||
+  lower.includes("/lethal company/") ||
+  lower.includes("/lethalcompany/") ||
+  lower.includes("bepinex") ||
+  lower.includes("bepinexpack") ||
   lower.includes("latecompany") ||
   lower.includes("morecompany") ||
   lower.includes("lethallib") ||
   lower.includes("lc_api") ||
-  lower.includes("thunderstore")
+  lower.includes("thunderstore") ||
+  lower.includes("r2modman") ||
+  lower.includes("logoutput.log")
 ) {
   return "lethal_company";
 }
@@ -2679,12 +2867,15 @@ function detectGameFromLog(log: string): string | null {
   }
 
   if (
-    lower.includes("garrysmod") ||
-    lower.includes("gmod") ||
-    lower.includes("lua panic")
-  ) {
-    return "gmod";
-  }
+  lower.includes("garrysmod") ||
+  lower.includes("garry's mod") ||
+  lower.includes("garry mod") ||
+  lower.includes("\\garrysmod\\") ||
+  lower.includes("/garrysmod/") ||
+  lower.includes("lua panic")
+) {
+  return "gmod";
+}
 
   if (
     lower.includes("stardew valley") ||
@@ -3382,6 +3573,7 @@ export default function Page() {
     issue?: string | null;
     error?: string | null;
   }>({});
+  const [autoDetectNotice, setAutoDetectNotice] = useState("");
   const [debugVid, setDebugVid] = useState("");
   const [debugProStatus, setDebugProStatus] = useState("");
   const [fixExecutionResults, setFixExecutionResults] = useState<FixExecutionResult[]>([]);
@@ -3447,6 +3639,57 @@ useEffect(() => {
     // ignore storage errors
   }
 }, [appSettings]);
+
+useEffect(() => {
+  if (!appSettings.autoDetectGames) {
+    setDetectedGameKey(null);
+    setAutoDetectNotice("");
+    return;
+  }
+
+  const trimmed = crashLog.trim();
+
+  if (!trimmed) {
+    setAutoDetectNotice("");
+    return;
+  }
+
+  const detectedGame = detectGameFromLog(crashLog);
+
+  if (!detectedGame) {
+    setDetectedGameKey(null);
+    setHasAppliedAutoGameDetect(false);
+
+    if (trimmed.length > 40) {
+      setAutoDetectNotice(
+  `FixMyGame will keep using your selected game: ${gameTitle}. If this is not the game you meant, choose the correct game before running the diagnostic.`
+);
+    }
+
+    setQuickSignals({});
+    setLogHighlights([]);
+    setLiveMods([]);
+    setMostSuspiciousLine(null);
+    return;
+  }
+
+  setAutoDetectNotice("");
+  setDetectedGameKey(detectedGame);
+
+  if (detectedGame !== selectedGameKey) {
+    setSelectedGameKey(detectedGame);
+
+    showActionMessage(
+      `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+      "fixAssistant"
+    );
+  }
+
+  setQuickSignals(quickDetect(crashLog, detectedGame));
+  setLogHighlights(extractLogHighlights(crashLog, detectedGame));
+  setLiveMods(extractModsFromLog(crashLog, detectedGame));
+  setMostSuspiciousLine(getMostSuspiciousLine(crashLog, detectedGame));
+}, [appSettings.autoDetectGames]);
 
 useEffect(() => {
   if (showDiagnosticRefineBox && diagnosticRefineMode === "still_crashing") {
@@ -3629,6 +3872,11 @@ const loadedLogSummary = useMemo(
 useEffect(() => {
   if (!shouldAutoScrollToResult || !displayAnalysis || !result || running) return;
 
+  if (!appSettings.autoScrollToResults) {
+    setShouldAutoScrollToResult(false);
+    return;
+  }
+
   const timer = window.setTimeout(() => {
     diagnosticResultRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -3638,7 +3886,13 @@ useEffect(() => {
   }, 250);
 
   return () => window.clearTimeout(timer);
-}, [shouldAutoScrollToResult, displayAnalysis, result, running]);
+}, [
+  shouldAutoScrollToResult,
+  displayAnalysis,
+  result,
+  running,
+  appSettings.autoScrollToResults,
+]);
 
 function resetLiveSessionState() {
   setCrashLog("");
@@ -3654,10 +3908,11 @@ function resetLiveSessionState() {
   setAnalysis(null);
   setDetectedSignals(null);
 
-  setQuickSignals({});
-  setLogHighlights([]);
-  setLiveMods([]);
-  setMostSuspiciousLine(null);
+setQuickSignals({});
+setLogHighlights([]);
+setLiveMods([]);
+setMostSuspiciousLine(null);
+setAutoDetectNotice("");
 
   setErrorMsg("");
   setFolderActionError("");
@@ -3917,6 +4172,7 @@ function toggleSupportTelemetry() {
 }
 
 function applyDetectedGameOnce(detectedGame: string | null) {
+  if (!appSettings.autoDetectGames) return;
   if (!detectedGame) return;
 
   if (!hasAppliedAutoGameDetect && detectedGame !== selectedGameKey) {
@@ -3934,6 +4190,49 @@ function applyDetectedGameOnce(detectedGame: string | null) {
   () => getProModalContent(proModalContext, gameTitle),
   [proModalContext, gameTitle]
 );
+
+function getActiveGameKeyForLoadedLog(contents: string) {
+  const trimmed = contents.trim();
+
+  if (!appSettings.autoDetectGames) {
+    setDetectedGameKey(null);
+    setHasAppliedAutoGameDetect(false);
+    setAutoDetectNotice("");
+    return selectedGameKey;
+  }
+
+  const detectedGame = detectGameFromLog(contents);
+
+  if (!detectedGame) {
+    setDetectedGameKey(null);
+    setHasAppliedAutoGameDetect(false);
+
+    if (trimmed.length > 40) {
+      setAutoDetectNotice(
+  `FixMyGame will keep using your selected game: ${gameTitle}. If this is not the game you meant, choose the correct game before running the diagnostic.`
+      );
+    } else {
+      setAutoDetectNotice("");
+    }
+
+    return selectedGameKey;
+  }
+
+  setAutoDetectNotice("");
+  setDetectedGameKey(detectedGame);
+  setHasAppliedAutoGameDetect(true);
+
+  if (detectedGame !== selectedGameKey) {
+    setSelectedGameKey(detectedGame);
+
+    showActionMessage(
+      `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+      "fixAssistant"
+    );
+  }
+
+  return detectedGame;
+}
 
 function showActionMessage(
   message: string,
@@ -4269,9 +4568,18 @@ const fixPlan = useMemo(
       effectiveGameTitle,
       displayAnalysis,
       displayDetectedSignals,
-      selectedGameProfile
+      selectedGameProfile,
+      Boolean(missingModRecovery?.found && missingModRecovery.alreadyInCorrectPlace)
     ),
-  [effectiveGameKey, effectiveGameTitle, displayAnalysis, displayDetectedSignals, selectedGameProfile]
+  [
+    effectiveGameKey,
+    effectiveGameTitle,
+    displayAnalysis,
+    displayDetectedSignals,
+    selectedGameProfile,
+    missingModRecovery?.found,
+    missingModRecovery?.alreadyInCorrectPlace,
+  ]
 );
 
 const activeSafeFixCategory =
@@ -4287,6 +4595,10 @@ const isMissingDependency =
 
 const isModConflict =
   activeSafeFixCategory === "mod_conflict";
+
+  const isWrongFileLoaded =
+  displayAnalysis?.detectedSignals?.likelyCategory === "wrong_file_loaded" ||
+  displayDetectedSignals?.likelyCategory === "wrong_file_loaded";
 
 const unsafeAutoRepairMods = [
   "json assets",
@@ -4719,6 +5031,8 @@ function buildSafeFixPlanPreview(params: {
 }
 
 function scrollToFixResultsArea() {
+  if (!appSettings.autoScrollToResults) return;
+
   setTimeout(() => {
     const target = fixResultsRef.current;
     if (!target) return;
@@ -4736,6 +5050,8 @@ function scrollToFixResultsArea() {
 }
 
 function scrollToContinueFromResult() {
+  if (!appSettings.autoScrollToResults) return;
+
   setTimeout(() => {
     diagnosticBottomRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -5103,12 +5419,9 @@ async function openBackupFolder() {
 
       const contents = await window.fixMyGame.readLogFile(filePath);
       setHasAppliedAutoGameDetect(false);
-      setCurrentLogPath(filePath);
-const detectedGame = detectGameFromLog(contents);
-const activeGameKey = detectedGame || selectedGameKey;
+setCurrentLogPath(filePath);
 
-setDetectedGameKey(detectedGame || null);
-applyDetectedGameOnce(detectedGame);
+const activeGameKey = getActiveGameKeyForLoadedLog(contents);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -5162,12 +5475,8 @@ const folderPath = await window.fixMyGame.pickScanFolder(defaultScanPath);
     const contents = await window.fixMyGame.readLogFile(bestLog.fullPath);
     setHasAppliedAutoGameDetect(false);
 setCurrentLogPath(bestLog.fullPath);
-const detectedGame = detectGameFromLog(contents);
-setDetectedGameKey(detectedGame || null);
-const activeGameKey = detectedGame || selectedGameKey;
 
-setDetectedGameKey(detectedGame || null);
-applyDetectedGameOnce(detectedGame);
+const activeGameKey = getActiveGameKeyForLoadedLog(contents);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -5234,12 +5543,9 @@ if (normalizedLogs.length > 0) {
 
   const contents = await window.fixMyGame.readLogFile(bestLog.fullPath);
   setHasAppliedAutoGameDetect(false);
-  setCurrentLogPath(bestLog.fullPath);
-const detectedGame = detectGameFromLog(contents);
-const activeGameKey = detectedGame || selectedGameKey;
+setCurrentLogPath(bestLog.fullPath);
 
-setDetectedGameKey(detectedGame || null);
-applyDetectedGameOnce(detectedGame);
+const activeGameKey = getActiveGameKeyForLoadedLog(contents);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -5277,11 +5583,8 @@ async function loadDetectedLog(fullPath: string) {
 const contents = await window.fixMyGame.readLogFile(fullPath);
 setHasAppliedAutoGameDetect(false);
 setCurrentLogPath(fullPath);
-const detectedGame = detectGameFromLog(contents);
-const activeGameKey = detectedGame || selectedGameKey;
 
-setDetectedGameKey(detectedGame || null);
-applyDetectedGameOnce(detectedGame);
+const activeGameKey = getActiveGameKeyForLoadedLog(contents);
 
 setCrashLog(contents);
 setQuickSignals(quickDetect(contents, activeGameKey));
@@ -6509,26 +6812,48 @@ onClick={() => {
               value={crashLog}
               onChange={(e) => {
   const value = e.target.value;
+  const trimmed = value.trim();
 
   setCrashLog(value);
   setCurrentLogPath("");
   setAutoDetectStatus("idle");
 
-  const detectedGame = detectGameFromLog(value);
-  const shouldAutoSwitchGame =
-    detectedGame &&
-    detectedGame !== selectedGameKey &&
-    !hasAppliedAutoGameDetect;
+  const detectedGame = appSettings.autoDetectGames
+    ? detectGameFromLog(value)
+    : null;
 
-  const activeGameKey = shouldAutoSwitchGame
-    ? detectedGame
-    : selectedGameKey;
+  const activeGameKey = detectedGame || selectedGameKey;
 
-  if (shouldAutoSwitchGame) {
-    setSelectedGameKey(detectedGame);
+  if (!appSettings.autoDetectGames) {
+    setDetectedGameKey(null);
+    setAutoDetectNotice("");
+  } else if (detectedGame) {
+    setAutoDetectNotice("");
+    setDetectedGameKey(detectedGame);
+    setHasAppliedAutoGameDetect(true);
+
+    if (detectedGame !== selectedGameKey) {
+      setSelectedGameKey(detectedGame);
+
+      showActionMessage(
+        `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
+        "fixAssistant"
+      );
+    }
+  } else {
+    setDetectedGameKey(null);
+    setHasAppliedAutoGameDetect(false);
+
+    if (trimmed.length > 40) {
+      setAutoDetectNotice(
+  `FixMyGame will keep using your selected game: ${gameTitle}. If this is not the game you meant, choose the correct game before running the diagnostic.`
+);
+    } else {
+      setAutoDetectNotice("");
+    }
   }
 
-  if (value.trim().length > 40) {
+  if (trimmed.length > 40 && (!appSettings.autoDetectGames || detectedGame)) {
     setQuickSignals(quickDetect(value, activeGameKey));
     setLogHighlights(extractLogHighlights(value, activeGameKey));
     setLiveMods(extractModsFromLog(value, activeGameKey));
@@ -6553,6 +6878,21 @@ onClick={() => {
 }
             />
           </Field>
+          {autoDetectNotice ? (
+  <div className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 shadow-[0_0_18px_rgba(245,158,11,0.08)]">
+    <div className="flex items-start gap-2">
+      <span className="mt-0.5 text-amber-300">⚠️</span>
+      <div>
+        <div className="font-semibold text-amber-100">
+          Auto-detect could not identify this log
+        </div>
+        <div className="mt-1 text-amber-100/80">
+          {autoDetectNotice}
+        </div>
+      </div>
+    </div>
+  </div>
+) : null}
           <div className="mt-4 space-y-3">
   {quickSignals.status || quickSignals.session || quickSignals.loader || quickSignals.java || quickSignals.issue || quickSignals.error ? (
     <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
@@ -7161,37 +7501,67 @@ onClick={() => {
   ) : null}
 
   <button
-    type="button"
-    onClick={async () => {
-const modsText =
-  displayDetectedSignals?.suspectedMods?.length
-    ? displayDetectedSignals.suspectedMods.join(", ")
-    : liveMods.length
-    ? liveMods.join(", ")
-    : "No suspected mods detected.";
+  type="button"
+  onClick={async () => {
+    const shouldCopyDiagnosis =
+      isWrongFileLoaded ||
+      missingModAlreadyInstalled ||
+      safeFixSuspects.length === 0;
 
-      addToFixHistory("suspected_mods", `${gameTitle} suspected mods`, modsText);
+    const textToCopy = shouldCopyDiagnosis
+      ? buildDiagnosticResultText(effectiveDisplayAnalysis, result)
+      : displayDetectedSignals?.suspectedMods?.length
+      ? displayDetectedSignals.suspectedMods.join(", ")
+      : liveMods.length
+      ? liveMods.join(", ")
+      : "No suspected mods detected.";
 
-      try {
-        await copyTextReliable(modsText);
-        setCopied(true);
-        showActionMessage("Suspected mods copied and saved to Fix History.", "smartFix");
-setTimeout(() => {
-  setCopied(false);
-}, 4000);
-      } catch (error: unknown) {
+    const historyType = shouldCopyDiagnosis ? "full_result" : "suspected_mods";
+    const historyTitle = shouldCopyDiagnosis
+      ? `${effectiveGameTitle} diagnostic result`
+      : `${effectiveGameTitle} suspected mods`;
+
+    addToFixHistory(historyType, historyTitle, textToCopy);
+
+    try {
+      await copyTextReliable(textToCopy);
+      setCopied(true);
+
+      showActionMessage(
+        shouldCopyDiagnosis
+          ? "Diagnosis copied and saved to Fix History."
+          : "Suspected mods copied and saved to Fix History.",
+        "smartFix"
+      );
+
+      setTimeout(() => {
         setCopied(false);
-        showActionMessage("Suspected mods saved to Fix History. System clipboard copy failed on this device.", "smartFix");
+      }, 4000);
+    } catch (error: unknown) {
+      setCopied(false);
 
-        setErrorMsg(
-          error instanceof Error ? error.message : "Failed to copy suspected mods."
-        );
-      }
-    }}
-    className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
-  >
-    {copied ? "Copied!" : "Copy Suspected Mods"}
-  </button>
+      showActionMessage(
+        shouldCopyDiagnosis
+          ? "Diagnosis saved to Fix History. System clipboard copy failed on this device."
+          : "Suspected mods saved to Fix History. System clipboard copy failed on this device.",
+        "smartFix"
+      );
+
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : shouldCopyDiagnosis
+          ? "Failed to copy diagnosis."
+          : "Failed to copy suspected mods."
+      );
+    }
+  }}
+  className="rounded-lg bg-white/10 px-3 py-2 text-sm hover:bg-white/15"
+>
+  {isWrongFileLoaded || missingModAlreadyInstalled || safeFixSuspects.length === 0
+    ? "Copy Diagnosis"
+    : "Copy Suspected Mods"}
+</button>
 
   <button
     type="button"
@@ -7856,6 +8226,63 @@ setTimeout(() => {
   </div>
 ) : (
         <div className="mt-5 grid gap-4">
+<div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+  <div className="flex items-start justify-between gap-4">
+    <div>
+      <div className="font-medium text-white">Auto-scroll to new results</div>
+      <p className="mt-1 text-sm text-white/60">
+        Automatically move the page to new diagnostics, repair results, and follow-up sections.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={() =>
+        setAppSettings((prev) => ({
+          ...prev,
+          autoScrollToResults: !prev.autoScrollToResults,
+        }))
+      }
+      className={[
+        "rounded-full px-3 py-1 text-xs font-semibold transition",
+        appSettings.autoScrollToResults
+          ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+          : "border border-white/10 bg-white/5 text-white/60",
+      ].join(" ")}
+    >
+      {appSettings.autoScrollToResults ? "On" : "Off"}
+    </button>
+  </div>
+</div>
+<div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+  <div className="flex items-start justify-between gap-4">
+    <div>
+      <div className="font-medium text-white">Auto-detect game from logs</div>
+      <p className="mt-1 text-sm text-white/60">
+        Automatically switch the selected game when FixMyGame recognizes a loaded log.
+        Turn this off if you want the dropdown to stay on the game you picked.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      onClick={() =>
+        setAppSettings((prev) => ({
+          ...prev,
+          autoDetectGames: !prev.autoDetectGames,
+        }))
+      }
+      className={[
+        "rounded-full px-3 py-1 text-xs font-semibold transition",
+        appSettings.autoDetectGames
+          ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+          : "border border-white/10 bg-white/5 text-white/60",
+      ].join(" ")}
+    >
+      {appSettings.autoDetectGames ? "On" : "Off"}
+    </button>
+  </div>
+</div>
   <SettingsPanel title="FIX ASSISTANT">
   <div className="rounded-xl border border-emerald-300/15 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-50/85">
     FixMyGame automatically creates a backup before applying safe fixes.
@@ -8194,16 +8621,22 @@ setTimeout(() => {
     </>
   ) : (
     <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-      <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
-        MANUAL FIX
-      </div>
-      <div className="mt-2 text-lg font-semibold text-white">
-        Follow the recommended steps.
-      </div>
-      <div className="mt-2 text-sm text-white/70">
-        Automatic repair is not available for this result.
-      </div>
-    </div>
+  <div className="text-xs font-semibold tracking-widest text-yellow-200/80">
+    {isWrongFileLoaded ? "WRONG FILE LOADED" : "MANUAL FIX"}
+  </div>
+
+  <div className="mt-2 text-lg font-semibold text-white">
+    {isWrongFileLoaded
+      ? "Load a real crash or error log."
+      : "Follow the recommended steps."}
+  </div>
+
+  <div className="mt-2 text-sm text-white/70">
+    {isWrongFileLoaded
+      ? "No safe repair is available because this file does not contain a crash, mod failure, missing dependency, or repair target."
+      : "Automatic repair is not available for this result."}
+  </div>
+</div>
   )}
 
   {activeSafeFixCategory === "mod_conflict" && safeFixSuspects.length === 0 ? (
@@ -8275,6 +8708,8 @@ setTimeout(() => {
 ? "Safe Repair Disabled in Settings"
 : !desktopConnected
 ? "Safe Repair Needs Desktop App"
+: isWrongFileLoaded
+? "No Repair Target in This File"
 : safeFixSuspects.length === 0
 ? "No Safe Repair Target Found"
 : activeSafeFixCategory !== "mod_conflict"
