@@ -7,6 +7,7 @@ type Snapshot = {
   id?: string;
   routeVersion?: string;
   appVersion?: string;
+  buildChannel?: string;
   vid?: string;
   game?: string;
   gameTitle?: string;
@@ -45,11 +46,12 @@ export async function GET(req: NextRequest) {
   const issueCounts: Record<string, number> = {};
   const gameCounts: Record<string, number> = {};
   const versionCounts: Record<string, number> = {};
+  const channelCounts: Record<string, number> = {};
 
   for (const snap of sorted) {
     const issue = snap.issue || "Unknown issue";
     const game = snap.gameTitle || snap.game || "Unknown game";
-
+    
     const version =
       snap.appVersion ||
       (snap.system?.appVersion as string) ||

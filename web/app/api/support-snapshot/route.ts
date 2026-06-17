@@ -36,10 +36,20 @@ export async function POST(req: Request) {
     const id = crypto.randomUUID();
 
     const snapshot = {
-      id,
-      routeVersion: "v2-diagnostic-mapping",
+  id,
+  routeVersion: "v2-diagnostic-mapping",
 
-      vid:
+  appVersion:
+    body?.appVersion ||
+    body?.system?.appVersion ||
+    "unknown",
+
+  buildChannel:
+    body?.buildChannel ||
+    body?.system?.buildChannel ||
+    "unknown",
+
+  vid:
   req.headers.get("x-fmg-device-id") ||
   body?.vid ||
   body?.deviceId ||

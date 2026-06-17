@@ -254,6 +254,9 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
+const FIXMYGAME_APP_VERSION = "1.0.5";
+const FIXMYGAME_BUILD_CHANNEL = "beta";
+
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
 
 type AppSettings = {
@@ -2228,6 +2231,28 @@ function getTopFeaturePills(gameKey: string) {
 }
 
 function quickDetect(log: string, gameKey: string) {
+  const trimmedLog = log.trim();
+const lowerLog = trimmedLog.toLowerCase();
+
+const looksLikePlainDataFile =
+  trimmedLog.startsWith("{") ||
+  trimmedLog.startsWith("[");
+
+const looksLikeCacheSettingsData =
+  looksLikePlainDataFile &&
+  (
+    lowerLog.includes('"login_history_player_name"') ||
+    lowerLog.includes('"last_updated"') ||
+    lowerLog.includes('"claimable_count"') ||
+    lowerLog.includes('"activity') ||
+    lowerLog.includes('"timestamp"') ||
+    lowerLog.includes('"history_player_name_list"')
+  ) &&
+  !/(exception|stack trace|caused by|crash|failed|error|smapi|bepinex|redscript|lua panic)/i.test(log);
+
+if (looksLikeCacheSettingsData) {
+  return {};
+}
   const lower = log.toLowerCase();
 
     if (
@@ -4269,7 +4294,8 @@ Did the game crash or did FixMyGame behave incorrectly:
 (Please leave the technical details below — they help us fix your issue faster.)
 ---
 
-App Version: 1.0.0
+App Version: ${FIXMYGAME_APP_VERSION}
+Build Channel: ${FIXMYGAME_BUILD_CHANNEL}
 Game: ${gameTitle || "Not selected"}
 GPU: ${gpuModel || "Not provided"}
 Driver: ${driverVersion || "Not provided"}
@@ -5793,7 +5819,8 @@ function buildSupportSnapshot(params?: {
   return {
     createdAt: new Date().toISOString(),
     sessionId: supportSessionId,
-    appVersion: "1.0.0",
+    appVersion: FIXMYGAME_APP_VERSION,
+    buildChannel: FIXMYGAME_BUILD_CHANNEL,
     eventType: params?.eventType || "manual_snapshot",
     eventDetail: params?.eventDetail || "",
     consent: {
