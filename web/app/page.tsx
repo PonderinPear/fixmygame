@@ -254,7 +254,7 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.5";
+const FIXMYGAME_APP_VERSION = "1.0.6";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
@@ -1313,17 +1313,23 @@ const looksLikeCacheOrSettingsData =
 
 if (looksLikeCacheOrSettingsData) {
   const selectedGameLabel =
-    gameKey === "stellaris"
-      ? "Stellaris"
-      : gameKey === "custom"
-      ? "Custom / Other"
-      : "the selected game";
+  GAME_PROFILES[gameKey]?.label || "selected game";
+
+const selectedGameCrashLogLabel =
+  GAME_PROFILES[gameKey]?.label
+    ? `${selectedGameLabel} crash log`
+    : "selected game crash log";
+
+const selectedGameLogFolderLabel =
+  GAME_PROFILES[gameKey]?.label
+    ? `${selectedGameLabel} crash/error/log folder`
+    : "selected game crash/error/log folder";
 
   return {
     quickFixFirst:
-      `This looks like a cache/settings/data file, not a ${selectedGameLabel} crash log.`,
+      `This looks like a cache/settings/data file, not a ${selectedGameCrashLogLabel}.`,
     issue:
-      `FixMyGame was given a cache/settings/data file instead of a ${selectedGameLabel} crash or error log.`,
+      `FixMyGame was given a cache/settings/data file instead of a ${selectedGameCrashLogLabel}.`,
     confidenceLevel: "High",
     probabilityBreakdown: [
       "95% - Wrong file loaded / cache or settings data",
@@ -1333,7 +1339,7 @@ if (looksLikeCacheOrSettingsData) {
       "The file appears to contain saved player, activity, cache, or settings data instead of crash/error output. FixMyGame cannot diagnose the actual crash from this file.",
     recommendedFixSteps: [
       `Reproduce the crash or issue in ${selectedGameLabel}.`,
-      `Open the ${selectedGameLabel} crash/error/log folder.`,
+      `Open the ${selectedGameLogFolderLabel}.`,
       "Sort the folder by Date Modified.",
       "Choose the newest crash, error, or player log created right after the issue happened.",
       "Run FixMyGame again with that newer log.",
@@ -5800,6 +5806,17 @@ async function openLogsFolder(
   }
 }
 
+function simpleTextFingerprint(text: string) {
+  const value = String(text || "");
+  let hash = 0;
+
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+
+  return hash.toString(16);
+}
+
 function pushSupportEvent(type: string, detail?: string) {
   setSupportEventHistory((prev) => [
     ...prev,
@@ -5830,6 +5847,9 @@ function buildSupportSnapshot(params?: {
     game: {
       key: selectedGameKey,
       title: gameTitle,
+      detectedGameKey,
+      effectiveGameKey,
+      effectiveGameTitle,
     },
     system: {
       gpuModel,
@@ -5845,17 +5865,19 @@ function buildSupportSnapshot(params?: {
       originalPath: lastFixResult?.originalPath || "",
     },
     diagnostic: {
-      crashLog,
-      quickSignals,
-      logHighlights,
-      liveMods,
-      mostSuspiciousLine,
-      detectedSignals: displayDetectedSignals,
-      analysis: displayAnalysis,
-      smartFixPath,
-      result,
-      loadedLogSummary,
-    },
+  crashLog,
+  crashLogLength: crashLog.length,
+  crashLogFingerprint: simpleTextFingerprint(crashLog),
+  quickSignals,
+  logHighlights,
+  liveMods,
+  mostSuspiciousLine,
+  detectedSignals: displayDetectedSignals,
+  analysis: displayAnalysis,
+  smartFixPath,
+  result,
+  loadedLogSummary,
+},
     continuation: {
       continuedDiagnosticBase,
       diagnosticRefineMode,
@@ -5908,20 +5930,7 @@ async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
       eventDetail,
     });
 
-const snapshotVid = (() => {
-  if (typeof window === "undefined") return "unknown";
-
-  const existing = window.localStorage.getItem("fmg-device-id");
-  if (existing) return existing;
-
-  const created =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `fmg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-  window.localStorage.setItem("fmg-device-id", created);
-  return created;
-})();
+const snapshotVid = getOrCreateDeviceId() || "unknown";
 
 const response = await fetchJSON<{ ok: boolean; skipped?: boolean; id?: string; error?: string }>(
   `${API_BASE_URL}/api/support-snapshot`,
@@ -6559,6 +6568,10 @@ return (
       </span>
     );
   })}
+
+  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/60">
+    v{FIXMYGAME_APP_VERSION} · {FIXMYGAME_BUILD_CHANNEL}
+  </span>
 </div>
 
 <div className="mt-4 flex flex-wrap gap-2">
