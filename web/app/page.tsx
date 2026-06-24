@@ -254,7 +254,7 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.6";
+const FIXMYGAME_APP_VERSION = "1.0.7";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
