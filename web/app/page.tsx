@@ -157,6 +157,15 @@ type AnalyzeResponse = {
     mostLikelyCause: string;
     recommendedFixSteps: string[];
     needMoreInfo: string;
+
+    explanation?: {
+      whatThisMeans: string;
+      whyFixMyGameThinksThis: string[];
+      beginnerExplanation: string;
+      doNotDoYet: string[];
+      stillCrashingNextSteps: string[];
+    };
+
     detectedSignals?: {
       errorType?: string;
       loader?: string;
@@ -167,19 +176,50 @@ type AnalyzeResponse = {
       advisoryLevel?: "none" | "advisory" | "important";
       advisoryTitle?: string;
       advisoryMessage?: string;
+
+      dependencyState?:
+        | "missing_not_installed"
+        | "installed_but_not_loaded"
+        | "installed_but_wrong_version"
+        | "installed_but_corrupted"
+        | "unknown_dependency_state";
+      missingComponentRaw?: string;
+      missingComponentDisplay?: string;
+      recommendedAction?:
+        | "install"
+        | "relaunch"
+        | "update_or_match_version"
+        | "reinstall"
+        | "inspect";
     };
   };
+
   detectedSignals?: {
-  errorType?: string;
-  loader?: string;
-  gameVersion?: string;
-  javaVersion?: string;
-  suspectedMods?: string[];
-  likelyCategory?: string;
-  advisoryLevel?: "none" | "advisory" | "important";
-  advisoryTitle?: string;
-  advisoryMessage?: string;
-};
+    errorType?: string;
+    loader?: string;
+    gameVersion?: string;
+    javaVersion?: string;
+    suspectedMods?: string[];
+    likelyCategory?: string;
+    advisoryLevel?: "none" | "advisory" | "important";
+    advisoryTitle?: string;
+    advisoryMessage?: string;
+
+    dependencyState?:
+      | "missing_not_installed"
+      | "installed_but_not_loaded"
+      | "installed_but_wrong_version"
+      | "installed_but_corrupted"
+      | "unknown_dependency_state";
+    missingComponentRaw?: string;
+    missingComponentDisplay?: string;
+    recommendedAction?:
+      | "install"
+      | "relaunch"
+      | "update_or_match_version"
+      | "reinstall"
+      | "inspect";
+  };
 };
 
 type CheckoutResponse = {
@@ -3409,7 +3449,7 @@ const GAME_PROFILES: Record<
   },
 };
 
-const API_BASE_URL = "https://fixmygame.vercel.app";
+const API_BASE_URL = "";
 
   const SORTED_GAME_PRESETS = [
   ...GAME_PRESETS.filter((g) => g.key !== "custom").sort((a, b) =>
@@ -3975,6 +4015,13 @@ function getKnownMissingModDownloadUrl(modName: string) {
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+    if (
+  normalized === "jei" ||
+  normalized.includes("just enough items") ||
+  normalized.includes("mezz jei")
+) {
+  return "https://modrinth.com/mod/jei";
+}
   if (
   normalized.includes("fabric api") ||
   normalized.includes("fabricapi")
@@ -4031,6 +4078,13 @@ function getPrimaryMissingModName() {
 
   const fabricApiMatch = rawText.match(/\bfabric[-\s]?api\b/i);
 if (fabricApiMatch) return "Fabric API";
+
+const jeiMatch =
+  rawText.match(/\bJust Enough Items\b/i) ||
+  rawText.match(/\bJEI\b/i) ||
+  rawText.match(/mezz[./]jei/i);
+
+if (jeiMatch) return "Just Enough Items (JEI)";
 
 const lcApiMatch = rawText.match(/\bLC[_\s-]?API\b/i);
 if (lcApiMatch) return "LC_API";
@@ -6136,6 +6190,7 @@ async function upgradeToPro() {
     setErrorMsg(msg);
   }
 }
+
 function buildDiagnosticResultText(
   analysisValue: AnalyzeResponse["analysis"] | null,
   resultValue: string
@@ -6145,15 +6200,70 @@ function buildDiagnosticResultText(
         "Quick Fix First:",
         analysisValue.quickFixFirst,
         "",
+
         `Issue: ${analysisValue.issue}`,
         `Confidence Level: ${analysisValue.confidenceLevel}`,
+        "",
+
         "Probability Breakdown:",
         ...analysisValue.probabilityBreakdown.map((item) => `- ${item}`),
+        "",
+
         `Most Likely Cause: ${analysisValue.mostLikelyCause}`,
+        "",
+
+        ...(analysisValue.explanation?.whatThisMeans
+          ? [
+              "What This Means:",
+              analysisValue.explanation.whatThisMeans,
+              "",
+            ]
+          : []),
+
+        ...(analysisValue.explanation?.whyFixMyGameThinksThis?.length
+          ? [
+              "Why FixMyGame Thinks This:",
+              ...analysisValue.explanation.whyFixMyGameThinksThis.map(
+                (item) => `- ${item}`
+              ),
+              "",
+            ]
+          : []),
+
+        ...(analysisValue.explanation?.beginnerExplanation
+          ? [
+              "Beginner Explanation:",
+              analysisValue.explanation.beginnerExplanation,
+              "",
+            ]
+          : []),
+
         "Recommended Fix Steps:",
         ...analysisValue.recommendedFixSteps.map(
           (step, index) => `${index + 1}. ${step}`
         ),
+        "",
+
+        ...(analysisValue.explanation?.doNotDoYet?.length
+          ? [
+              "Do Not Do This Yet:",
+              ...analysisValue.explanation.doNotDoYet.map(
+                (item) => `- ${item}`
+              ),
+              "",
+            ]
+          : []),
+
+        ...(analysisValue.explanation?.stillCrashingNextSteps?.length
+          ? [
+              "If It Still Crashes:",
+              ...analysisValue.explanation.stillCrashingNextSteps.map(
+                (item) => `- ${item}`
+              ),
+              "",
+            ]
+          : []),
+
         `Need More Info: ${analysisValue.needMoreInfo}`,
       ].join("\n")
     : resultValue;
@@ -7773,7 +7883,11 @@ onClick={() => {
     disabled={!missingModDownloadUrl || missingModAlreadyInstalled}
     className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
   >
-    {missingModAlreadyInstalled ? "Download Not Needed" : "Download Missing Mod"}
+    {missingModAlreadyInstalled
+  ? "Download Not Needed"
+  : primaryMissingModName
+  ? `Open ${primaryMissingModName} Page`
+  : "Download Missing Mod"}
   </button>
 
   {missingModAlreadyInstalled ? (
@@ -7912,32 +8026,116 @@ onClick={() => {
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs font-semibold tracking-widest text-white/60">
-            MOST LIKELY CAUSE
-          </div>
-          <div className="mt-2 text-white">{effectiveDisplayAnalysis.mostLikelyCause}</div>
-        </div>
+  <div className="text-xs font-semibold tracking-widest text-white/60">
+    MOST LIKELY CAUSE
+  </div>
+  <div className="mt-2 text-white">
+    {effectiveDisplayAnalysis.mostLikelyCause}
+  </div>
+</div>
 
-        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs font-semibold tracking-widest text-white/60">
-            RECOMMENDED FIX STEPS
-          </div>
-          <ol className="mt-3 grid gap-2 text-white/90">
-            {effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => (
-              <li key={`${index}-${step}`} className="rounded-xl bg-white/5 px-3 py-2">
-                <span className="mr-2 font-semibold text-white">{index + 1}.</span>
-                {step}
-              </li>
-            ))}
-          </ol>
-        </div>
+{effectiveDisplayAnalysis.explanation?.whatThisMeans ? (
+  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+    <div className="text-xs font-semibold tracking-widest text-white/60">
+      WHAT THIS MEANS
+    </div>
+    <div className="mt-2 text-white/90">
+      {effectiveDisplayAnalysis.explanation.whatThisMeans}
+    </div>
+  </div>
+) : null}
 
-        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-          <div className="text-xs font-semibold tracking-widest text-white/60">
-            NEED MORE INFO
-          </div>
-          <div className="mt-2 text-white/90">{effectiveDisplayAnalysis.needMoreInfo}</div>
-        </div>
+{effectiveDisplayAnalysis.explanation?.whyFixMyGameThinksThis?.length ? (
+  <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+    <div className="text-xs font-semibold tracking-widest text-white/60">
+      WHY FIXMYGAME THINKS THIS
+    </div>
+    <ul className="mt-3 grid gap-2 text-white/90">
+      {effectiveDisplayAnalysis.explanation.whyFixMyGameThinksThis.map(
+        (item, index) => (
+          <li
+            key={`${index}-${item}`}
+            className="rounded-xl bg-white/5 px-3 py-2"
+          >
+            {item}
+          </li>
+        )
+      )}
+    </ul>
+  </div>
+) : null}
+
+{effectiveDisplayAnalysis.explanation?.beginnerExplanation ? (
+  <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+      BEGINNER EXPLANATION
+    </div>
+    <div className="mt-2 text-white/90">
+      {effectiveDisplayAnalysis.explanation.beginnerExplanation}
+    </div>
+  </div>
+) : null}
+
+<div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+  <div className="text-xs font-semibold tracking-widest text-white/60">
+    RECOMMENDED FIX STEPS
+  </div>
+  <ol className="mt-3 grid gap-2 text-white/90">
+    {effectiveDisplayAnalysis.recommendedFixSteps.map((step, index) => (
+      <li key={`${index}-${step}`} className="rounded-xl bg-white/5 px-3 py-2">
+        <span className="mr-2 font-semibold text-white">{index + 1}.</span>
+        {step}
+      </li>
+    ))}
+  </ol>
+</div>
+
+{effectiveDisplayAnalysis.explanation?.doNotDoYet?.length ? (
+  <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-amber-200/80">
+      DO NOT DO THIS YET
+    </div>
+    <ul className="mt-3 grid gap-2 text-white/90">
+      {effectiveDisplayAnalysis.explanation.doNotDoYet.map((item, index) => (
+        <li
+          key={`${index}-${item}`}
+          className="rounded-xl bg-black/20 px-3 py-2"
+        >
+          {item}
+        </li>
+      ))}
+    </ul>
+  </div>
+) : null}
+
+{effectiveDisplayAnalysis.explanation?.stillCrashingNextSteps?.length ? (
+  <div className="rounded-2xl border border-violet-400/20 bg-violet-400/10 p-4">
+    <div className="text-xs font-semibold tracking-widest text-violet-200/80">
+      IF IT STILL CRASHES
+    </div>
+    <ul className="mt-3 grid gap-2 text-white/90">
+      {effectiveDisplayAnalysis.explanation.stillCrashingNextSteps.map(
+        (item, index) => (
+          <li
+            key={`${index}-${item}`}
+            className="rounded-xl bg-black/20 px-3 py-2"
+          >
+            {item}
+          </li>
+        )
+      )}
+    </ul>
+  </div>
+) : null}
+
+<div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+  <div className="text-xs font-semibold tracking-widest text-white/60">
+    NEED MORE INFO
+  </div>
+  <div className="mt-2 text-white/90">
+    {effectiveDisplayAnalysis.needMoreInfo}
+  </div>
+</div>
 
         <details className="rounded-2xl border border-white/10 bg-black/20 p-4">
           <summary className="cursor-pointer text-xs font-semibold tracking-widest text-white/60">

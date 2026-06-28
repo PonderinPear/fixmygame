@@ -83,6 +83,15 @@ type AnalyzeModelResponse = {
   mostLikelyCause: string;
   recommendedFixSteps: string[];
   needMoreInfo: string;
+
+  explanation?: {
+    whatThisMeans: string;
+    whyFixMyGameThinksThis: string[];
+    beginnerExplanation: string;
+    doNotDoYet: string[];
+    stillCrashingNextSteps: string[];
+  };
+
   detectedSignals: DetectedSignals;
 };
 
@@ -1512,13 +1521,62 @@ function formatPlainText(result: AnalyzeModelResponse) {
     "Quick Fix First:",
     result.quickFixFirst,
     "",
+
     `Issue: ${result.issue}`,
     `Confidence Level: ${result.confidenceLevel}`,
+    "",
+
     "Probability Breakdown (must total 100%):",
     ...result.probabilityBreakdown.map((line) => `- ${line.replace(/^-+\s*/, "")}`),
+    "",
+
     `Most Likely Cause: ${result.mostLikelyCause}`,
+    "",
+
+    ...(result.explanation?.whatThisMeans
+      ? [
+          "What This Means:",
+          result.explanation.whatThisMeans,
+          "",
+        ]
+      : []),
+
+    ...(result.explanation?.whyFixMyGameThinksThis?.length
+      ? [
+          "Why FixMyGame Thinks This:",
+          ...result.explanation.whyFixMyGameThinksThis.map((line) => `- ${line}`),
+          "",
+        ]
+      : []),
+
+    ...(result.explanation?.beginnerExplanation
+      ? [
+          "Beginner Explanation:",
+          result.explanation.beginnerExplanation,
+          "",
+        ]
+      : []),
+
     "Recommended Fix Steps:",
     ...result.recommendedFixSteps.map((step, i) => `${i + 1}. ${step}`),
+    "",
+
+    ...(result.explanation?.doNotDoYet?.length
+      ? [
+          "Do Not Do This Yet:",
+          ...result.explanation.doNotDoYet.map((line) => `- ${line}`),
+          "",
+        ]
+      : []),
+
+    ...(result.explanation?.stillCrashingNextSteps?.length
+      ? [
+          "If It Still Crashes:",
+          ...result.explanation.stillCrashingNextSteps.map((line) => `- ${line}`),
+          "",
+        ]
+      : []),
+
     `Need More Info: ${result.needMoreInfo}`,
   ].join("\n");
 }
@@ -1854,6 +1912,142 @@ function resolveDependencyState(params: {
   };
 }
 
+function buildDefaultExplanation(
+  result: AnalyzeModelResponse
+): NonNullable<AnalyzeModelResponse["explanation"]> {
+  const category = result.detectedSignals?.likelyCategory || "unknown";
+  const suspectedMods = result.detectedSignals?.suspectedMods || [];
+  const errorType = result.detectedSignals?.errorType || "";
+  const loader = result.detectedSignals?.loader || "";
+
+  const suspectText =
+    suspectedMods.length > 0
+      ? suspectedMods.join(", ")
+      : "the mod or dependency named in the log";
+
+  if (category === "missing_dependency" || category === "dependency_not_initialized") {
+    return {
+      whatThisMeans:
+        "A mod is trying to use another mod, library, or API that is not currently available to the game.",
+      whyFixMyGameThinksThis: [
+        result.issue,
+        result.mostLikelyCause,
+        errorType ? `The log includes ${errorType}.` : "",
+        suspectedMods.length > 0
+          ? `The suspected mod or component is: ${suspectText}.`
+          : "",
+      ].filter(Boolean),
+      beginnerExplanation:
+        "A dependency is something one mod needs in order to work. If that required piece is missing, the game can crash even if the main mod is installed.",
+      doNotDoYet: [
+        "Do not delete your whole Mods folder.",
+        "Do not reinstall the whole game first.",
+        "Do not download files from random reupload sites.",
+      ],
+      stillCrashingNextSteps: [
+        "Make sure the dependency version matches your game and loader version.",
+        "Remove duplicate or old copies of the dependency if more than one exists.",
+        "Run FixMyGame again with the newest log after testing.",
+      ],
+    };
+  }
+
+  if (category === "loader_mismatch") {
+    return {
+      whatThisMeans:
+        "At least one mod, plugin, loader, or framework does not match the version of the game setup currently running.",
+      whyFixMyGameThinksThis: [
+        result.issue,
+        result.mostLikelyCause,
+        loader ? `The detected loader/system is ${loader}.` : "",
+      ].filter(Boolean),
+      beginnerExplanation:
+        "A loader is what makes mods run. Mods usually have to match the correct game version and loader type.",
+      doNotDoYet: [
+        "Do not mix Forge-only mods with Fabric-only mods.",
+        "Do not reinstall the whole game before checking versions.",
+        "Do not change several mods at once.",
+      ],
+      stillCrashingNextSteps: [
+        "Check the exact game version.",
+        "Check the exact loader or framework version.",
+        "Update or replace the mismatched mod, then test again.",
+      ],
+    };
+  }
+
+  if (category === "mod_conflict" || category === "mixin_failure") {
+    return {
+      whatThisMeans:
+        "One mod appears to be breaking while the game is loading, or two mods may be trying to change the same part of the game.",
+      whyFixMyGameThinksThis: [
+        result.issue,
+        result.mostLikelyCause,
+        suspectedMods.length > 0
+          ? `FixMyGame found these suspicious mod names: ${suspectText}.`
+          : "",
+      ].filter(Boolean),
+      beginnerExplanation:
+        "A mod conflict means the game may work normally until two mods try to control the same feature, file, class, or behavior.",
+      doNotDoYet: [
+        "Do not delete your saves.",
+        "Do not remove a bunch of mods at once without a backup.",
+        "Do not assume the base game is broken yet.",
+      ],
+      stillCrashingNextSteps: [
+        "Disable the suspected mod first and test again.",
+        "Update the suspected mod to the correct version.",
+        "Re-enable mods one at a time until the crash returns.",
+      ],
+    };
+  }
+
+  if (category === "game_files_corrupt") {
+    return {
+      whatThisMeans:
+        "The log points more toward missing or damaged base game files than toward one specific mod.",
+      whyFixMyGameThinksThis: [
+        result.issue,
+        result.mostLikelyCause,
+      ].filter(Boolean),
+      beginnerExplanation:
+        "Base game files are the original files installed by Steam or the game launcher. Mods rely on those files being present.",
+      doNotDoYet: [
+        "Do not delete your saves.",
+        "Do not delete your whole Mods folder first.",
+        "Do not reinstall before trying file verification.",
+      ],
+      stillCrashingNextSteps: [
+        "Verify the game files through the launcher.",
+        "Launch the game again after verification finishes.",
+        "Load the newest log if it still crashes.",
+      ],
+    };
+  }
+
+  return {
+    whatThisMeans:
+      "FixMyGame found useful signals, but the log does not fully prove one single cause yet.",
+    whyFixMyGameThinksThis: [
+      result.issue,
+      result.mostLikelyCause,
+      errorType ? `The log includes ${errorType}.` : "",
+    ].filter(Boolean),
+    beginnerExplanation:
+      "Some logs do not show one clear cause. The safest fix is to make one small change, test, then continue with a fresh log.",
+    doNotDoYet: [
+      "Do not delete saves.",
+      "Do not reinstall the whole game yet.",
+      "Do not change many things at once.",
+    ],
+    stillCrashingNextSteps: [
+      "Run the game again and reproduce the issue.",
+      "Load the newest log created after the crash.",
+      "Use Continue Diagnostic so FixMyGame can compare the next log.",
+    ],
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const redis = await getRedis();
@@ -2043,7 +2237,14 @@ Expected JSON shape:
   "mostLikelyCause": "string",
   "recommendedFixSteps": ["string", "string"],
   "needMoreInfo": "string",
-  "detectedSignals": {
+"explanation": {
+  "whatThisMeans": "string",
+  "whyFixMyGameThinksThis": ["string", "string"],
+  "beginnerExplanation": "string",
+  "doNotDoYet": ["string", "string"],
+  "stillCrashingNextSteps": ["string", "string"]
+},
+"detectedSignals": {
     "errorType": "string",
     "loader": "string",
     "gameVersion": "string",
@@ -2075,6 +2276,54 @@ Rules:
 - State clearly whether the previous issue appears resolved, unchanged, replaced by a new issue, or not visible in the newest log.
 - If the newest log is healthy and the previous diagnostic was also healthy, say that the result remains stable across both diagnostics.
 - If the newest log is healthy but the previous diagnostic showed an issue, say that the previous issue is not visible in the newest log and may be resolved.
+- explanation.whatThisMeans should explain the result in plain English.
+- explanation.whyFixMyGameThinksThis should list the evidence from the log or structured signals.
+- explanation.beginnerExplanation should define any technical term a beginner might not know.
+- explanation.doNotDoYet should warn against risky panic steps like deleting all mods, reinstalling the whole game, or downloading random files.
+- explanation.stillCrashingNextSteps should tell the user what to do if the first fix does not work.
+- Keep explanation fields short, practical, and beginner-friendly.
+
+Answer Quality Rules:
+- When giving Minecraft dependency steps, include both the Minecraft version and loader when known.
+- If Forge is detected, say "Forge version" instead of only saying "Minecraft version".
+- If Fabric is detected, say "Fabric version" instead of only saying "Minecraft version".
+- For Minecraft dependency fixes, recommendedFixSteps should avoid vague wording like "correct version" unless it also says the exact game version and loader.
+- Be specific. Do not say vague things like "the error message indicates..." if the actual class, mod, file, or line is known.
+- Use the exact evidence from the log when available.
+- explanation.whyFixMyGameThinksThis must mention at least one concrete log signal, such as an exception name, class name, mod name, missing file, loader, or suspicious line.
+- If the log contains a class path like mezz.jei.api.runtime.IJeiRuntime, explain what it points to in beginner language.
+- Do not over-explain. Each field should be useful, short, and direct.
+- Do not sound corporate, robotic, or like a developer console.
+- Do not say "may be" or "could be" when the log clearly proves the issue.
+- Do not invent uncertainty just to sound careful.
+- If confidence is High, use confident wording.
+- If confidence is Low or Medium, explain exactly what is missing.
+- The best answer should tell the user:
+  1. what broke,
+  2. why FixMyGame thinks that,
+  3. what to do first,
+  4. what not to do yet,
+  5. what to try if the first fix does not work.
+
+Better wording examples:
+Bad: "The error message indicates a missing class related to the JEI mod."
+Good: "The log says ClassNotFoundException for mezz.jei.api.runtime.IJeiRuntime, which is part of JEI."
+
+Bad: "Install the required dependency."
+Good: "Install Just Enough Items (JEI) for Minecraft 1.20.1 and Forge 47.2.0."
+
+Bad: "Ensure all mods are compatible."
+Good: "Make sure the JEI version matches Minecraft 1.20.1 and Forge, not Fabric."
+
+Bad: "A dependency is missing."
+Good: "ExampleMod is trying to call JEI, but JEI is not installed in the Mods folder."
+
+Bad: "Download and install the correct version of JEI for Minecraft 1.20.1."
+Good: "Download and install the Forge version of Just Enough Items (JEI) for Minecraft 1.20.1."
+
+Bad: "Make sure all mods are compatible."
+Good: "Make sure JEI, ExampleMod, and Forge all match Minecraft 1.20.1."
+
 
 Context:
 Game: ${safeGameTitle}
@@ -2231,7 +2480,43 @@ if (healthyLogDetected) {
   (parsed.detectedSignals?.likelyCategory === "advisory_empty_folder"
     ? "If the same warning still appears after cleanup, launch the game again and load the newest SMAPI log."
     : "If the issue continues, provide a newer crash log after the problem happens."),
-  detectedSignals: {
+
+explanation:
+  parsed.explanation && typeof parsed.explanation === "object"
+    ? {
+        whatThisMeans:
+          typeof parsed.explanation.whatThisMeans === "string"
+            ? parsed.explanation.whatThisMeans
+            : "",
+        whyFixMyGameThinksThis:
+          Array.isArray(parsed.explanation.whyFixMyGameThinksThis)
+            ? parsed.explanation.whyFixMyGameThinksThis.filter(
+                (item: unknown) =>
+                  typeof item === "string" && item.trim().length > 0
+              )
+            : [],
+        beginnerExplanation:
+          typeof parsed.explanation.beginnerExplanation === "string"
+            ? parsed.explanation.beginnerExplanation
+            : "",
+        doNotDoYet:
+          Array.isArray(parsed.explanation.doNotDoYet)
+            ? parsed.explanation.doNotDoYet.filter(
+                (item: unknown) =>
+                  typeof item === "string" && item.trim().length > 0
+              )
+            : [],
+        stillCrashingNextSteps:
+          Array.isArray(parsed.explanation.stillCrashingNextSteps)
+            ? parsed.explanation.stillCrashingNextSteps.filter(
+                (item: unknown) =>
+                  typeof item === "string" && item.trim().length > 0
+              )
+            : [],
+      }
+    : undefined,
+
+detectedSignals: {
   errorType: parsed.detectedSignals?.errorType || "",
   loader: parsed.detectedSignals?.loader || "",
   gameVersion: parsed.detectedSignals?.gameVersion || "",
@@ -2336,12 +2621,27 @@ const finalNormalized =
         typeof mostSuspiciousLine === "string" ? mostSuspiciousLine : ""
       );
 
-    const result = formatPlainText(finalNormalized);
+   const finalWithExplanation: AnalyzeModelResponse = {
+  ...finalNormalized,
+  explanation:
+    finalNormalized.explanation &&
+    (
+      finalNormalized.explanation.whatThisMeans ||
+      finalNormalized.explanation.whyFixMyGameThinksThis?.length ||
+      finalNormalized.explanation.beginnerExplanation ||
+      finalNormalized.explanation.doNotDoYet?.length ||
+      finalNormalized.explanation.stillCrashingNextSteps?.length
+    )
+      ? finalNormalized.explanation
+      : buildDefaultExplanation(finalNormalized),
+};
+
+const result = formatPlainText(finalWithExplanation);
 
 const res = jsonResponse({
   result,
-  analysis: finalNormalized,
-  detectedSignals: finalNormalized.detectedSignals,
+  analysis: finalWithExplanation,
+  detectedSignals: finalWithExplanation.detectedSignals,
   isPro,
   remaining: isPro ? Infinity : Math.max(0, DAILY_LIMIT - count),
 });
