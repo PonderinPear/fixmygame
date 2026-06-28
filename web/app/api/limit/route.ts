@@ -6,7 +6,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const redis = Redis.fromEnv();
+function getRedisClient() {
+  return Redis.fromEnv();
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,11 +52,23 @@ function getClientKey(req: NextRequest) {
 }
 
 async function isBetaOpen() {
+  const redis = getRedisClient();
   const betaValue = await redis.get("beta:open");
   return String(betaValue) === "1";
 }
 
 export async function GET(req: NextRequest) {
+  if (
+  process.env.NODE_ENV === "development" &&
+  (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)
+) {
+  return NextResponse.json({
+    isPro: false,
+    isBeta: true,
+    remaining: 999,
+    limit: 999,
+  });
+}
   try {
     const betaOpen = await isBetaOpen();
 
@@ -83,6 +97,7 @@ export async function GET(req: NextRequest) {
     const clientKey = getClientKey(req);
     const key = `limit:${today()}:${clientKey}`;
 
+    const redis = getRedisClient();
     const raw = await redis.get(key);
     const count = raw ? Number(raw) : 0;
 

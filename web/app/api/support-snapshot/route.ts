@@ -5,8 +5,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const redis = Redis.fromEnv();
-
+function getRedisClient() {
+  return Redis.fromEnv();
+}
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -21,6 +22,16 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: Request) {
+  if (
+  process.env.NODE_ENV === "development" &&
+  (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN)
+) {
+  return NextResponse.json({
+    ok: true,
+    skipped: true,
+    reason: "Support snapshot skipped locally because Redis is not configured.",
+  });
+}
   try {
     const body = await req.json();
 
@@ -82,7 +93,8 @@ export async function POST(req: Request) {
       raw: body,
     };
 
-    await redis.set(`snapshot:${snapshot.id}`, snapshot)
+    const redis = getRedisClient();
+await redis.set(`snapshot:${snapshot.id}`, snapshot);
 
     return NextResponse.json(
       { ok: true, id: snapshot.id },
