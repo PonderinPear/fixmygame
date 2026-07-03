@@ -2304,6 +2304,10 @@ Answer Quality Rules:
   3. what to do first,
   4. what not to do yet,
   5. what to try if the first fix does not work.
+- For Minecraft java_mismatch results, name the exact Java version needed when the Minecraft version is known.
+- For Minecraft 1.18+ on Forge/Fabric/Quilt, prefer Java 17 unless the log clearly says a different version is required.
+- Do not say only "update Java" when the log provides Minecraft version, loader, or current Java version.
+- Better: "Install/select Java 17 for Minecraft 1.20.1 and Forge 47.2.0."
 
 Better wording examples:
 Bad: "The error message indicates a missing class related to the JEI mod."
