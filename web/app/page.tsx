@@ -3773,6 +3773,9 @@ export default function Page() {
   const fixAssistantScrollRef = useRef<HTMLDivElement | null>(null);
   const continueResultRef = useRef<HTMLDivElement | null>(null);
   const diagnosticBottomRef = useRef<HTMLDivElement | null>(null);
+  const [diagnosticFeedback, setDiagnosticFeedback] = useState<
+  "helpful" | "needs_work" | null
+>(null);
 
   useEffect(() => {
     fetchBetaStatus();
@@ -4537,12 +4540,22 @@ ${FIXMYGAME_BETA_INVITE_URL}`;
     }
   }
 
-  function openSupportEmail() {
-    const subject = encodeURIComponent(
-      `FixMyGame Issue Report — ${gameTitle || "Unknown Game"}`,
-    );
+ function openSupportEmail() {
+  const subject = encodeURIComponent(
+    `FixMyGame Issue Report — ${gameTitle || "Unknown Game"}`,
+  );
 
-    const body = encodeURIComponent(`
+  const resultTitle =
+    displayAnalysis?.issue ||
+    analysis?.issue ||
+    "No diagnostic result available";
+
+  const confidenceLevel =
+    displayAnalysis?.confidenceLevel ||
+    analysis?.confidenceLevel ||
+    "Not available";
+
+  const body = encodeURIComponent(`
 Describe your issue here:
 
 What happened:
@@ -4556,6 +4569,8 @@ Did the game crash or did FixMyGame behave incorrectly:
 
 App Version: ${FIXMYGAME_APP_VERSION}
 Build Channel: ${FIXMYGAME_BUILD_CHANNEL}
+Session ID: ${supportSessionId || "Not available"}
+Route Version: v2-diagnostic-mapping
 Game: ${gameTitle || "Not selected"}
 GPU: ${gpuModel || "Not provided"}
 Driver: ${driverVersion || "Not provided"}
@@ -4564,11 +4579,14 @@ Graphics API: ${graphicsApiMode || "Not provided"}
 ---
 
 Continuation Mode: ${continuedDiagnosticBase ? "Active" : "Not Active"}
+Additional Crash Log Provided: Not tracked in support email
 
 ---
 
 Last Diagnostic Result:
-${result ? result.slice(0, 1500) : "No diagnostic result available"}
+${result ? result.slice(0, 1500) : resultTitle}
+
+Confidence Level: ${confidenceLevel}
 
 ---
 
@@ -4583,14 +4601,71 @@ ${
 
 ---
 
+Suspected Mods:
+Not separately listed
+
+---
+
+Quick Fix:
+${
+  displayAnalysis?.quickFixFirst ||
+  analysis?.quickFixFirst ||
+  "Not available"
+}
+
+---
+
 (Optional) Crash Log Snippet:
 ${crashLog ? crashLog.slice(0, 1500) : "Not provided"}
+
 `);
 
-    window.location.href = `mailto:fixmygame.support@gmail.com?subject=${subject}&body=${body}`;
-  }
+  window.location.href = `mailto:fixmygame.support@gmail.com?subject=${subject}&body=${body}`;
+}
 
-  async function runRefinedDiagnosticNow() {
+function submitDiagnosticFeedback(rating: "helpful" | "needs_work") {
+  setDiagnosticFeedback(rating);
+
+  recordEmergencyEvent({
+    type: "feedback_submitted",
+    sessionId: supportSessionId,
+    appVersion: "v1.0.7-beta",
+    routeVersion: "v2-diagnostic-mapping",
+    game: effectiveGameTitle,
+    resultCategory:
+      displayAnalysis?.detectedSignals?.likelyCategory ||
+      displayDetectedSignals?.likelyCategory ||
+      analysis?.detectedSignals?.likelyCategory ||
+      detectedSignals?.likelyCategory,
+    resultTitle:
+      displayAnalysis?.issue ||
+      analysis?.issue ||
+      result?.slice(0, 120) ||
+      "No diagnostic result title available",
+    confidence:
+      displayAnalysis?.confidenceLevel ||
+      analysis?.confidenceLevel ||
+      "Not available",
+    message:
+      rating === "helpful"
+        ? "User marked diagnostic result as helpful"
+        : "User marked diagnostic result as needs work",
+    metadata: {
+      source: "diagnostic_result_helpfulness",
+      feedbackRating: rating,
+      hasAnalysis: Boolean(displayAnalysis || analysis),
+      hasResultText: Boolean(result?.trim()),
+      hasCrashLog: Boolean(crashLog?.trim()),
+      continuedDiagnostic: Boolean(continuedDiagnosticBase),
+      quickFix:
+        displayAnalysis?.quickFixFirst ||
+        analysis?.quickFixFirst ||
+        "Not available",
+    },
+  });
+}
+
+async function runRefinedDiagnosticNow() {
     const nextLog = additionalRefineLog.trim() || crashLog.trim();
 
     if (!nextLog) {
@@ -8943,7 +9018,53 @@ ${crashLog ? crashLog.slice(0, 1500) : "Not provided"}
                     </div>
                   </div>
                 ) : (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex w-full flex-col gap-3">
+                    <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <p className="text-sm font-medium text-white">
+        Was this result helpful?
+      </p>
+      <p className="mt-1 text-xs text-white/50">
+        This rates the clarity of the diagnosis, not whether the crash is fixed.
+      </p>
+    </div>
+
+    <div className="flex gap-2">
+      <button
+        type="button"
+        onClick={() => submitDiagnosticFeedback("helpful")}
+        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+          diagnosticFeedback === "helpful"
+            ? "border-emerald-300/60 bg-emerald-400/15 text-emerald-100"
+            : "border-white/10 bg-white/[0.04] text-white/70 hover:border-white/25 hover:text-white"
+        }`}
+      >
+        👍 Helpful
+      </button>
+
+      <button
+        type="button"
+        onClick={() => submitDiagnosticFeedback("needs_work")}
+        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+          diagnosticFeedback === "needs_work"
+            ? "border-amber-300/60 bg-amber-400/15 text-amber-100"
+            : "border-white/10 bg-white/[0.04] text-white/70 hover:border-white/25 hover:text-white"
+        }`}
+      >
+        👎 Needs work
+      </button>
+    </div>
+  </div>
+
+  {diagnosticFeedback && (
+    <p className="mt-3 text-xs text-white/50">
+      {diagnosticFeedback === "helpful"
+        ? "Thanks — this helps improve FixMyGame."
+        : "Thanks — we’ll use this to improve future diagnostics."}
+    </p>
+  )}
+</div>
                     <button
   type="button"
   onClick={async () => {
@@ -10256,12 +10377,37 @@ ${crashLog ? crashLog.slice(0, 1500) : "Not provided"}
         </button>
 
         <button
-          type="button"
-          onClick={openSupportEmail}
-          className="text-white/50 transition hover:text-white"
-        >
-          Report an Issue
-        </button>
+  type="button"
+  onClick={() => {
+    recordEmergencyEvent({
+      type: "feedback_submitted",
+      sessionId: supportSessionId,
+      appVersion: "v1.0.7-beta",
+      routeVersion: "v2-diagnostic-mapping",
+      game: effectiveGameTitle,
+      resultCategory:
+        analysis?.detectedSignals?.likelyCategory ||
+        detectedSignals?.likelyCategory,
+      resultTitle: analysis?.issue,
+      confidence: analysis?.confidenceLevel,
+      message: "User clicked Report an Issue from the bottom support link",
+      metadata: {
+        source: "bottom_report_issue_link",
+        hasAnalysis: Boolean(analysis),
+        hasCrashLog: Boolean(crashLog?.trim()),
+        hasAdditionalCrashLog: false,
+        continuedDiagnostic: Boolean(continuedDiagnosticBase),
+        suspectedMods: "Not separately listed",
+        quickFix: analysis?.quickFixFirst,
+      },
+    });
+
+    openSupportEmail();
+  }}
+  className="text-white/50 transition hover:text-white"
+>
+  Report an Issue
+</button>
       </div>
     </main>
   );

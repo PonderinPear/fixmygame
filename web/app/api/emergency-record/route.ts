@@ -17,6 +17,7 @@ const allowedTypes: EmergencyEventType[] = [
   "download_clicked",
   "beta_access_requested",
   "app_error",
+  "still_crashing_after_fix"
 ];
 
 export async function POST(req: NextRequest) {

@@ -1,9 +1,32 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const adminKey = process.env.FMG_ADMIN_EVENTS_KEY;
+  const providedKey = req.headers.get("x-fmg-admin-key");
+
+  if (!adminKey) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Emergency events admin key is not configured.",
+      },
+      { status: 500 }
+    );
+  }
+
+  if (!providedKey || providedKey !== adminKey) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Unauthorized.",
+      },
+      { status: 401 }
+    );
+  }
+
   try {
     const rawEvents = await redis.lrange<string>(
       "fixmygame:emergency_events",

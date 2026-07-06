@@ -3,50 +3,103 @@ import Link from "next/link";
 export const metadata = {
   title: "FixMyGame Guides | Crash Log Help for Modded PC Games",
   description:
-    "Beginner-friendly guides for crash logs, missing dependencies, mod conflicts, safe repair previews, and verifying game files.",
+    "Beginner-friendly FixMyGame guides for Minecraft crash errors, Java version issues, missing dependencies, SMAPI logs, BepInEx logs, mod conflicts, and safe repair previews.",
 };
-const guides = [
+const guideSections = [
   {
-    title: "How to read a crash log",
-    description:
-      "Learn what parts of a crash log actually matter and what can usually be ignored.",
-    tag: "Beginner",
-    href: "/guides/how-to-read-a-crash-log",
+    title: "Start Here",
+    description: "Basic FixMyGame and crash-log help before you start changing files.",
+    guides: [
+      {
+        title: "How to read a crash log",
+        description:
+          "Learn what parts of a crash log actually matter and what can usually be ignored.",
+        tag: "Beginner",
+        href: "/guides/how-to-read-a-crash-log",
+      },
+      {
+        title: "Fresh log vs old log",
+        description:
+          "Why FixMyGame needs the newest log after a crash, not an older healthy session.",
+        tag: "Important",
+        href: "/guides/fresh-log-vs-old-log",
+      },
+    ],
   },
   {
-    title: "Fresh log vs old log",
-    description:
-      "Why FixMyGame needs the newest log after a crash, not an older healthy session.",
-    tag: "Important",
-    href: "/guides/fresh-log-vs-old-log",
+    title: "Crash Fix Library",
+    description: "Specific crash messages and common modded-game errors.",
+    guides: [
+      {
+        title: "Minecraft JEI ClassNotFoundException Fix",
+        description:
+          "Fix crashes mentioning mezz.jei.api.runtime.IJeiRuntime or missing JEI classes.",
+        tag: "Minecraft",
+        href: "/guides/minecraft-jei-classnotfoundexception-fix",
+      },
+      {
+        title: "Minecraft Java 17 UnsupportedClassVersionError Fix",
+        description:
+          "Fix Minecraft crashes caused by running the wrong Java version for your modpack.",
+        tag: "Minecraft",
+        href: "/guides/minecraft-unsupportedclassversionerror-java-17-fix",
+      },
+      {
+        title: "Minecraft Fabric API Missing Dependency Fix",
+        description:
+          "What to do when a Fabric mod needs Fabric API before it can load.",
+        tag: "Minecraft",
+        href: "/guides/minecraft-fabric-api-missing-dependency-fix",
+      },
+      {
+        title: "Stardew Valley SMAPI Empty Folder Fix",
+        description:
+          "Clean up SMAPI skipped-mod warnings caused by empty or invalid mod folders.",
+        tag: "Stardew Valley",
+        href: "/guides/stardew-smapi-empty-folder-skipped-mod-fix",
+      },
+      {
+        title: "Lethal Company BepInEx LogOutput Fix",
+        description:
+          "Find the right BepInEx log and understand missing dependency issues.",
+        tag: "Lethal Company",
+        href: "/guides/lethal-company-bepinex-logoutput-fix",
+      },
+    ],
   },
   {
-    title: "Missing dependencies",
-    description:
-      "What it means when a mod needs another mod installed before it can work.",
-    tag: "Mods",
-    href: "/guides/missing-dependencies",
-  },
-  {
-    title: "Mod conflicts",
-    description:
-      "How two mods can break each other and why removing one is sometimes the fix.",
-    tag: "Troubleshooting",
-    href: "/guides/mod-conflicts",
-  },
-  {
-    title: "Safe Repair Preview",
-    description:
-      "What FixMyGame can safely help with and why backups matter before changes.",
-    tag: "FixMyGame",
-    href: "/guides/safe-repair-preview",
-  },
-  {
-    title: "When to reinstall or verify files",
-    description:
-      "Know when the issue is probably game files instead of your mods.",
-    tag: "Game Files",
-    href: "/guides/verify-or-reinstall-game-files",
+    title: "FixMyGame Help",
+    description: "General troubleshooting concepts FixMyGame uses when reading logs.",
+    guides: [
+      {
+        title: "Missing dependencies",
+        description:
+          "What it means when a mod needs another mod installed before it can work.",
+        tag: "Mods",
+        href: "/guides/missing-dependencies",
+      },
+      {
+        title: "Mod conflicts",
+        description:
+          "How two mods can break each other and why removing one is sometimes the fix.",
+        tag: "Troubleshooting",
+        href: "/guides/mod-conflicts",
+      },
+      {
+        title: "Safe Repair Preview",
+        description:
+          "What FixMyGame can safely help with and why backups matter before changes.",
+        tag: "FixMyGame",
+        href: "/guides/safe-repair-preview",
+      },
+      {
+        title: "When to reinstall or verify files",
+        description:
+          "Know when the issue is probably game files instead of your mods.",
+        tag: "Game Files",
+        href: "/guides/verify-or-reinstall-game-files",
+      },
+    ],
   },
 ];
 
@@ -86,30 +139,44 @@ export default function GuidesPage() {
               </p>
             </div>
 
-            <div className="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {guides.map((guide) => (
-                <article
-                  key={guide.title}
-                  className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur transition hover:border-cyan-400/30 hover:bg-white/[0.07]"
-                >
-                  <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-                    {guide.tag}
-                  </div>
+            <div className="mt-12 space-y-12">
+  {guideSections.map((section) => (
+    <section key={section.title}>
+      <div>
+        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
+          {section.title}
+        </div>
 
-                  <h2 className="text-xl font-semibold">{guide.title}</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
+          {section.description}
+        </p>
+      </div>
 
-                  <p className="mt-3 text-sm leading-6 text-white/68">
-                    {guide.description}
-                  </p>
-
-                  <div className="mt-5 text-sm font-semibold text-cyan-300">
-                    <Link href={guide.href}>
-                      Open guide →
-                    </Link>
-                  </div>
-                </article>
-              ))}
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {section.guides.map((guide) => (
+          <article
+            key={guide.title}
+            className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur transition hover:border-cyan-400/30 hover:bg-white/[0.07]"
+          >
+            <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+              {guide.tag}
             </div>
+
+            <h2 className="text-xl font-semibold">{guide.title}</h2>
+
+            <p className="mt-3 text-sm leading-6 text-white/68">
+              {guide.description}
+            </p>
+
+            <div className="mt-5 text-sm font-semibold text-cyan-300">
+              <Link href={guide.href}>Open guide →</Link>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  ))}
+</div>
           </section>
 
           <section className="py-8 md:py-14">
