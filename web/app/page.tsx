@@ -319,9 +319,14 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.7";
+const FIXMYGAME_APP_VERSION = "1.0.8";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 const FIXMYGAME_BETA_INVITE_URL = "https://fixmygame-site.vercel.app/";
+const FIXMYGAME_BETA_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScGcdRTg2kv4-_NKk1x2MkjSd1QsVItjKxi0ht--HNf1GLngQ/viewform"
+const FIXMYGAME_DISCORD_URL = "https://discord.gg/MfcAX69EU";
+const FIXMYGAME_FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/1TM1lghcLiq95Hq37vUB67--FCAmfSByB9KZL1_UZJf4/edit";
+const FIXMYGAME_DONATION_URL = "https://ko-fi.com/fixmygame";
+const WHATS_NEW_STORAGE_KEY = `fixmygame:whats-new-seen:${FIXMYGAME_APP_VERSION}`;
 
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
 
@@ -3619,7 +3624,12 @@ export default function Page() {
   const [checkingAuthorization, setCheckingAuthorization] = useState(true);
   const [supportTelemetryEnabled, setSupportTelemetryEnabled] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"privacy" | "app">("privacy");
+  const [showWhatsNewModal, setShowWhatsNewModal] = useState(false);
+  const [showBetaShareModal, setShowBetaShareModal] = useState(false);
+  const [betaShareReturnTarget, setBetaShareReturnTarget] = useState<
+  "settings" | null
+>(null);
+  const [settingsTab, setSettingsTab] = useState<"privacy" | "app" | "Updates & Links">("privacy");
   const [appSettings, setAppSettings] =
     useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [supportSessionId] = useState(() => crypto.randomUUID());
@@ -4415,18 +4425,6 @@ export default function Page() {
     }
   }
 
-  function toggleSupportTelemetry() {
-    const next = !supportTelemetryEnabled;
-    setSupportTelemetryEnabled(next);
-
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        SUPPORT_TELEMETRY_STORAGE_KEY,
-        next ? "true" : "false",
-      );
-    }
-  }
-
   function applyDetectedGameOnce(detectedGame: string | null) {
     if (!appSettings.autoDetectGames) return;
     if (!detectedGame) return;
@@ -4517,28 +4515,89 @@ export default function Page() {
     window.open(FIXMYGAME_BETA_INVITE_URL, "_blank", "noopener,noreferrer");
   }
 
-  async function copyBetaInvite() {
-    const inviteText = `I’m testing FixMyGame, an AI crash diagnostic tool for modded PC games.
+  function openDonationPage() {
+  if (window.fixMyGame?.openExternalUrl) {
+    window.fixMyGame.openExternalUrl(FIXMYGAME_DONATION_URL);
+    return;
+  }
+
+  window.open(FIXMYGAME_DONATION_URL, "_blank", "noopener,noreferrer");
+}
+
+function closeWhatsNewModal() {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(WHATS_NEW_STORAGE_KEY, "true");
+  }
+
+  setShowWhatsNewModal(false);
+}
+
+function buildBetaInviteText() {
+  return `I’m testing FixMyGame, an AI crash diagnostic tool for modded PC games.
 
 It helps read crash logs and explain:
 - what broke
-- why it thinks that
+- why FixMyGame thinks that
 - what to try first
 - what not to delete
 
-Beta application:
-${FIXMYGAME_BETA_INVITE_URL}`;
+You can see more about it here:
+${FIXMYGAME_BETA_INVITE_URL}
 
-    try {
-      await copyTextReliable(inviteText);
-      showActionMessage(
-        "Beta invite copied. Send it to someone with modded game crashes.",
-        "diagnostic",
-      );
-    } catch {
-      window.open(FIXMYGAME_BETA_INVITE_URL, "_blank", "noopener,noreferrer");
-    }
+
+Request beta access directly:
+${FIXMYGAME_BETA_FORM_URL}
+
+`;
+}
+
+function openEmailBetaInvite() {
+  const subject = encodeURIComponent("FixMyGame beta invite");
+  const body = encodeURIComponent(buildBetaInviteText());
+
+  window.location.href = `mailto:?subject=${subject}&body=${body}`;
+}
+
+async function copyBetaInviteText() {
+  try {
+    await copyTextReliable(buildBetaInviteText());
+    showActionMessage(
+      "Beta invite copied. Paste it into Discord, text, email, or anywhere else.",
+      "diagnostic",
+    );
+    setBetaShareReturnTarget(null);
+    setShowBetaShareModal(false);
+  } catch {
+    setErrorMsg("Could not copy the beta invite text.");
   }
+}
+
+function openBetaFormPage() {
+  if (window.fixMyGame?.openExternalUrl) {
+    window.fixMyGame.openExternalUrl(FIXMYGAME_BETA_FORM_URL);
+    return;
+  }
+
+  window.open(FIXMYGAME_BETA_FORM_URL, "_blank", "noopener,noreferrer");
+}
+
+function openDiscordPage() {
+  if (window.fixMyGame?.openExternalUrl) {
+    window.fixMyGame.openExternalUrl(FIXMYGAME_DISCORD_URL);
+    return;
+  }
+
+  window.open(FIXMYGAME_DISCORD_URL, "_blank", "noopener,noreferrer");
+}
+
+function openFeedbackFormPage() {
+  if (window.fixMyGame?.openExternalUrl) {
+    window.fixMyGame.openExternalUrl(FIXMYGAME_FEEDBACK_FORM_URL);
+    return;
+  }
+
+  window.open(FIXMYGAME_FEEDBACK_FORM_URL, "_blank", "noopener,noreferrer");
+}
 
  function openSupportEmail() {
   const subject = encodeURIComponent(
@@ -4564,7 +4623,7 @@ Steps to reproduce:
 Did the game crash or did FixMyGame behave incorrectly:
 
 
-(Please leave the technical details below — they help us fix your issue faster.)
+IMPORTANT -- (Please leave the technical details below — they help us fix your issue faster.)
 ---
 
 App Version: ${FIXMYGAME_APP_VERSION}
@@ -4629,7 +4688,7 @@ function submitDiagnosticFeedback(rating: "helpful" | "needs_work") {
   recordEmergencyEvent({
     type: "feedback_submitted",
     sessionId: supportSessionId,
-    appVersion: "v1.0.7-beta",
+    appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
     routeVersion: "v2-diagnostic-mapping",
     game: effectiveGameTitle,
     resultCategory:
@@ -4743,12 +4802,14 @@ async function runRefinedDiagnosticNow() {
   }
 
   function acceptAuthorizationGate() {
+    if (!supportTelemetryEnabled) {
+      setShowError(true);
+      return;
+    }
+
     if (typeof window !== "undefined") {
       window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
-      window.localStorage.setItem(
-        SUPPORT_TELEMETRY_STORAGE_KEY,
-        supportTelemetryEnabled ? "true" : "false",
-      );
+      window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
     }
 
     setHasAcceptedAuthorization(true);
@@ -5227,7 +5288,19 @@ async function runRefinedDiagnosticNow() {
       const savedSupportTelemetry = window.localStorage.getItem(
         SUPPORT_TELEMETRY_STORAGE_KEY,
       );
-      setSupportTelemetryEnabled(savedSupportTelemetry === "true");
+
+if (savedAuthorization === "true") {
+  window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
+  setSupportTelemetryEnabled(true);
+
+  const hasSeenWhatsNew = window.localStorage.getItem(WHATS_NEW_STORAGE_KEY);
+
+  if (!hasSeenWhatsNew) {
+    setShowWhatsNewModal(true);
+  }
+} else {
+  setSupportTelemetryEnabled(savedSupportTelemetry === "true");
+}
 
       let vid = window.localStorage.getItem("fmg_vid");
 
@@ -5674,7 +5747,7 @@ async function runRefinedDiagnosticNow() {
     recordEmergencyEvent({
       type: "undo_clicked",
       sessionId: supportSessionId,
-      appVersion: "v1.0.7-beta",
+      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
@@ -8172,7 +8245,7 @@ async function runRefinedDiagnosticNow() {
                       recordEmergencyEvent({
                         type: "safe_repair_previewed",
                         sessionId: supportSessionId,
-                        appVersion: "v1.0.7-beta",
+                        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
                         routeVersion: "v2-diagnostic-mapping",
                         game: effectiveGameTitle,
                         resultCategory:
@@ -9149,7 +9222,7 @@ async function runRefinedDiagnosticNow() {
                         recordEmergencyEvent({
                           type: "still_crashing_clicked",
                           sessionId: supportSessionId,
-                          appVersion: "v1.0.7-beta",
+                          appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
                           routeVersion: "v2-diagnostic-mapping",
                           game: effectiveGameTitle,
                           metadata: {
@@ -9188,6 +9261,264 @@ async function runRefinedDiagnosticNow() {
         )}
       </section>
 
+        {showBetaShareModal ? (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+    onClick={() => { setBetaShareReturnTarget(null); setShowBetaShareModal(false); }}
+  >
+    <div
+      className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex items-start justify-between gap-4">
+  <div>
+    {betaShareReturnTarget === "settings" ? (
+      <button
+        type="button"
+        onClick={() => {
+          setShowBetaShareModal(false);
+          setShowSettingsModal(true);
+          setSettingsTab("Updates & Links");
+          setBetaShareReturnTarget(null);
+        }}
+        className="mb-4 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/70 transition hover:bg-white/10 hover:text-white"
+      >
+        ← Back to Updates & Links
+      </button>
+    ) : null}
+
+    <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+      SHARE FIXMYGAME BETA
+    </div>
+
+    <h2 className="mt-2 text-2xl font-bold text-white">
+      Invite someone to test FixMyGame
+    </h2>
+
+    <p className="mt-2 text-sm text-white/60">
+      Send a beta invite through email, copy the message for Discord or
+      text, or open the app links directly.
+    </p>
+  </div>
+
+  <button
+    type="button"
+    onClick={() => {
+      setBetaShareReturnTarget(null);
+      setShowBetaShareModal(false);
+    }}
+    className="rounded-xl border border-white/10 px-3 py-2 text-sm text-white/60 transition hover:bg-white/10 hover:text-white"
+  >
+    ✕
+  </button>
+</div>
+
+      <div className="mt-5 grid gap-3">
+       <button
+  type="button"
+  onClick={openEmailBetaInvite}
+  className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-left text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15"
+>
+  Email invite
+  <div className="mt-1 text-xs font-normal text-cyan-100/60">
+    Opens a prefilled plain-text email with the website and beta form links.
+  </div>
+
+  <div className="mt-2 rounded-lg border border-yellow-300/20 bg-yellow-300/10 px-3 py-2 text-xs font-normal text-yellow-100/80">
+    ⚠️ Email links may not appear clickable in every mail app. If needed,
+    hover over the URL, or click directly after each URL and press Enter.
+  </div>
+</button>
+
+        <button
+          type="button"
+          onClick={copyBetaInviteText}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/10"
+        >
+          Copy invite text
+          <div className="mt-1 text-xs font-normal text-white/50">
+            Best for Discord, text messages, DMs, or anywhere else.
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={openBetaInvitePage}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/10"
+        >
+          Open website
+          <div className="mt-1 text-xs font-normal text-white/50">
+            Shows app info, visuals, guides, and general beta details.
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={openBetaFormPage}
+          className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/10"
+        >
+          Open beta request form
+          <div className="mt-1 text-xs font-normal text-white/50">
+            Goes directly to the Google Form.
+          </div>
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
+        {showWhatsNewModal ? (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+    onClick={closeWhatsNewModal}
+  >
+    <div
+      className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#071224] p-6 shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-xs font-semibold tracking-widest text-cyan-300/80">
+        FIXMYGAME {FIXMYGAME_APP_VERSION} UPDATE
+      </div>
+
+      <h2 className="mt-3 text-2xl font-bold text-white">
+        What’s new in this update
+      </h2>
+
+      <p className="mt-3 text-sm text-white/65">
+        This update focuses on making FixMyGame safer, clearer, and easier to
+        test during beta.
+      </p>
+
+      <div className="mt-5 space-y-3">
+ <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    New Updates & Links settings tab
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Added a dedicated Updates & Links tab in Settings so update notes, beta
+    links, support options, and invite tools are easier to find.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Quick Links added to Settings
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Added quick access to the FixMyGame website, Discord beta server, beta
+    invite sharing, issue reporting, beta request form, and feedback form.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Better beta invite flow
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    The beta invite modal can now be opened from Settings, includes a return
+    path back to Updates & Links, and supports copying or emailing the beta
+    invite text.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Optional support moved
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Optional FixMyGame support was moved out of the App tab and into Updates &
+    Links so app behavior settings stay separate from links and support.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    New FixMyGame Guides
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Added beginner-friendly guides for reading crash logs, missing
+    dependencies, mod conflicts, fresh logs vs old logs, Safe Repair Preview,
+    and verifying or reinstalling game files.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    New game-specific help pages
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Added targeted help pages for common Minecraft, Stardew Valley, and Lethal
+    Company issues, including Java version errors, missing Fabric API, JEI
+    dependency problems, empty SMAPI folders, and BepInEx log help.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Required beta diagnostic snapshots
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Beta builds now require anonymous diagnostic snapshots so bugs, failed
+    repair paths, crash patterns, and confusing results can be reviewed during
+    testing.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Fresh beta access checks
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    FixMyGame now checks beta access again when running diagnostics, so the app
+    responds correctly if beta access changes.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Better diagnostic feedback
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Diagnostic results can now be marked helpful or needs work, giving beta
+    testing clearer feedback on what is working and what needs improvement.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Cleaner support and reporting
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Report issue emails now include helpful app details, version info, session
+    details, diagnostic context, and a clearer note asking users to leave the
+    technical details in place.
+  </p>
+</div>
+
+<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+  <div className="text-sm font-semibold text-white">
+    Behind-the-scenes support updates
+  </div>
+  <p className="mt-1 text-sm text-white/60">
+    Added support for clearer emergency records, support snapshots, sitemap
+    updates, guide discovery improvements, and safer beta testing workflows.
+  </p>
+</div>
+</div>
+
+      <div className="mt-6 flex justify-end">
+        <button
+          type="button"
+          onClick={closeWhatsNewModal}
+          className="rounded-xl bg-cyan-400 px-5 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
       {showSettingsModal ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
@@ -9205,12 +9536,12 @@ async function runRefinedDiagnosticNow() {
                 <h2 className="mt-2 text-2xl font-bold text-white">
                   FixMyGame Settings
                 </h2>
-                <p className="mt-2 text-sm text-white/70">
-                  Control privacy, diagnostics, and local app preferences.
-                  <div className="mt-2 text-sm text-white/50">
-                    Changes are saved automatically on this device.
-                  </div>
-                </p>
+                <div className="mt-2 text-sm text-white/70">
+  Control privacy, diagnostics, and local app preferences.
+  <div className="mt-2 text-sm text-white/50">
+    Changes are saved automatically on this device.
+  </div>
+</div>
               </div>
 
               <button
@@ -9248,9 +9579,21 @@ async function runRefinedDiagnosticNow() {
               >
                 App
               </button>
+              <button
+  type="button"
+  onClick={() => setSettingsTab("Updates & Links")}
+  className={[
+    "rounded-xl px-4 py-2 text-sm font-medium transition",
+    settingsTab === "Updates & Links"
+      ? "border border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+      : "border border-white/10 bg-white/5 text-white/70 hover:bg-white/10",
+  ].join(" ")}
+>
+  Updates & Links
+</button>
             </div>
 
-            {settingsTab === "privacy" ? (
+                        {settingsTab === "privacy" ? (
               <div className="mt-5 grid gap-4">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
@@ -9259,17 +9602,20 @@ async function runRefinedDiagnosticNow() {
 
                   <div className="mt-4">
                     <div className="font-medium text-white">
-                      Help improve FixMyGame by sharing anonymous diagnostic
-                      data
+                      Beta diagnostic snapshots are required while FixMyGame is
+                      in beta.
                     </div>
 
-                    <p className="mt-2 text-sm text-white/60">
-                      Includes crash patterns, detected issues, and fix results.
-                      No unrelated personal files are collected.
+                    <p className="mt-2 text-sm leading-6 text-white/60">
+                      Snapshots may include crash logs, detected issues,
+                      selected game, mod/plugin names, repair results, and
+                      basic system details. No unrelated personal files,
+                      passwords, payment info, or full folder contents are
+                      collected.
                     </p>
 
-                    <p className="mt-2 text-xs text-white/45">
-                      Current status: {supportTelemetryEnabled ? "On" : "Off"}
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-widest text-cyan-200/80">
+                      Current status: Required for beta / Enabled
                     </p>
 
                     <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -9281,7 +9627,7 @@ async function runRefinedDiagnosticNow() {
                         We never collect:
                       </div>
 
-                      <ul className="mt-2 list-disc pl-5 text-sm text-white/60 space-y-1">
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-white/60">
                         <li>Personal files or documents</li>
                         <li>Passwords or account information</li>
                         <li>Full folder contents</li>
@@ -9290,57 +9636,156 @@ async function runRefinedDiagnosticNow() {
                       </ul>
                     </div>
 
-                    <div className="mt-5 flex justify-end">
-                      <label className="relative inline-flex h-7 w-14 shrink-0 cursor-pointer items-center">
-                        <input
-                          type="checkbox"
-                          checked={supportTelemetryEnabled}
-                          onChange={toggleSupportTelemetry}
-                          className="peer sr-only"
-                          aria-label="Share anonymous diagnostic data"
-                        />
-                        <span className="absolute inset-0 rounded-full bg-white/15 transition peer-checked:bg-cyan-400" />
-                        <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition peer-checked:left-8" />
-                      </label>
+                    <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-100/80">
+                      During beta, diagnostic snapshots stay enabled so FixMyGame can review bugs, failed repair paths, and crash patterns. Privacy controls can be expanded before the public release.
                     </div>
                   </div>
                 </div>
-
-                <div className="rounded-2xl border border-red-500/20 bg-red-950/20 p-4">
-                  <div className="font-medium text-white">
-                    Reset privacy consent
-                  </div>
-
-                  <p className="mt-2 text-sm text-white/60">
-                    This will clear your accepted authorization and reopen the
-                    privacy consent screen next time.
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const confirmed = window.confirm(
-                        "Reset privacy consent? You will see the authorization screen again next time.",
-                      );
-
-                      if (!confirmed) return;
-
-                      window.localStorage.removeItem(APP_AUTH_STORAGE_KEY);
-                      window.localStorage.removeItem(
-                        SUPPORT_TELEMETRY_STORAGE_KEY,
-                      );
-
-                      setHasAcceptedAuthorization(false);
-                      setSupportTelemetryEnabled(false);
-                      setShowSettingsModal(false);
-                    }}
-                    className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-200 transition hover:bg-red-500/20"
-                  >
-                    Reset Consent
-                  </button>
-                </div>
               </div>
-            ) : (
+                        ) : settingsTab === "Updates & Links" ? (
+  <div className="mt-5 grid gap-4">
+    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+        UPDATES & LINKS
+      </div>
+
+      <p className="mt-2 text-sm leading-6 text-white/60">
+        View update notes, beta links, support options, and community info from
+        one place.
+      </p>
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="font-medium text-white">
+            What’s New
+          </div>
+          <p className="mt-1 text-sm text-white/60">
+            Reopen the update notes for FixMyGame {FIXMYGAME_APP_VERSION}.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowSettingsModal(false);
+            setShowWhatsNewModal(true);
+          }}
+          className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15"
+        >
+          View
+        </button>
+      </div>
+    </div>
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+  <div className="text-xs font-semibold tracking-widest text-white/50">
+    QUICK LINKS
+  </div>
+
+  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+  <button
+    type="button"
+    onClick={openBetaInvitePage}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Website</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Open the public FixMyGame site.
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={openDiscordPage}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Discord</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Open the FixMyGame beta server.
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={() => {
+      setBetaShareReturnTarget("settings");
+      setShowSettingsModal(false);
+      setShowBetaShareModal(true);
+    }}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Share beta invite</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Email or copy the invite text.
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={openSupportEmail}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Report an issue</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Send support email with app details.
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={openBetaFormPage}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Beta request form</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Open the beta request form.
+    </div>
+  </button>
+
+  <button
+    type="button"
+    onClick={openFeedbackFormPage}
+    className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/10"
+  >
+    <div className="text-sm font-semibold text-white">Feedback form</div>
+    <div className="mt-1 text-xs leading-5 text-white/50">
+      Share app feedback.
+    </div>
+  </button>
+</div>
+</div>
+<div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+  <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+    OPTIONAL SUPPORT
+  </div>
+
+  <div className="mt-3 font-medium text-white">
+    Support FixMyGame
+  </div>
+
+  <p className="mt-2 text-sm leading-6 text-white/60">
+    FixMyGame beta is free to test. If the app helped you or
+    you want to support continued development, optional
+    donations help cover hosting, testing, bug review, and
+    future app updates.
+  </p>
+
+  <button
+    type="button"
+    onClick={openDonationPage}
+    className="mt-4 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+  >
+    Open Donation Page
+  </button>
+
+  <p className="mt-3 text-xs text-white/45">
+    Donations are optional and are not required for beta
+    access.
+  </p>
+</div>
+</div>
+) : (
               <div className="mt-5 grid gap-4">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <div className="flex items-start justify-between gap-4">
@@ -10285,47 +10730,52 @@ async function runRefinedDiagnosticNow() {
                 </ul>
               </div>
 
-              <div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
-                <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
-                  HELP IMPROVE FIXMYGAME
-                </div>
+<div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+  <div className="text-xs font-semibold tracking-widest text-emerald-200/80">
+    BETA DIAGNOSTIC SNAPSHOTS
+  </div>
 
-                <div className="mt-3 text-sm text-white/90">
-                  If enabled, FixMyGame can securely collect anonymous
-                  diagnostic snapshots such as crash logs, mod lists, system
-                  details, detected issues, and repair actions. This helps
-                  improve detection accuracy, identify common problems faster,
-                  and deliver better fixes in future updates.
-                </div>
+  <div className="mt-3 text-sm text-white/90">
+    FixMyGame beta requires anonymous diagnostic snapshots so bugs, failed
+    repair paths, crash patterns, and confusing results can be reviewed during
+    testing. Snapshots may include crash logs, detected issues, selected game,
+    mod/plugin names, repair results, and basic system details.
+  </div>
 
-                <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 transition hover:bg-black/30">
-                  <input
-                    type="checkbox"
-                    checked={supportTelemetryEnabled}
-                    onChange={(e) => {
-                      setSupportTelemetryEnabled(e.target.checked);
-                      if (e.target.checked) setShowError(false);
-                    }}
-                    className="mt-1 h-4 w-4 accent-cyan-400"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-white">
-                      Help improve FixMyGame by sharing anonymous diagnostic
-                      data (recommended)
-                    </div>
-                    <div className="mt-1 text-xs text-white/60">
-                      This helps improve issue detection, repair quality, and
-                      future updates. No unrelated personal files are accessed.
-                    </div>
-                  </div>
-                </label>
-                {showError ? (
-                  <div className="mt-3 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-100">
-                    Please check the box before continuing.
-                  </div>
-                ) : null}
-              </div>
+  <div className="mt-3 text-xs text-white/60">
+    FixMyGame does not collect unrelated personal files, passwords, payment
+    info, or full folder contents.
+  </div>
 
+  <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 transition hover:bg-black/30">
+    <input
+      type="checkbox"
+      checked={supportTelemetryEnabled}
+      onChange={(e) => {
+        setSupportTelemetryEnabled(e.target.checked);
+        if (e.target.checked) setShowError(false);
+      }}
+      className="mt-1 h-4 w-4 accent-cyan-400"
+    />
+    <div>
+      <div className="text-sm font-medium text-white">
+        I agree to share beta diagnostic snapshots for debugging and app
+        improvement.
+      </div>
+      <div className="mt-1 text-xs text-white/60">
+        Required for beta access. This helps FixMyGame review bugs, failed
+        repair paths, crash patterns, and unclear diagnostic results during
+        testing.
+      </div>
+    </div>
+  </label>
+
+  {showError ? (
+    <div className="mt-3 rounded-xl border border-red-500/30 bg-red-950/40 px-4 py-3 text-sm text-red-100">
+      Beta access requires diagnostic snapshot permission before continuing.
+    </div>
+  ) : null}
+</div>    
               <div className="mt-5 rounded-xl border border-white/10 bg-white/5 p-4">
                 <div className="text-xs font-semibold tracking-widest text-white/60">
                   WHAT FIXMYGAME WILL NOT DO AUTOMATICALLY
@@ -10370,7 +10820,7 @@ async function runRefinedDiagnosticNow() {
       <div className="mt-8 flex items-center justify-between text-sm">
         <button
           type="button"
-          onClick={openBetaInvitePage}
+          onClick={() => { setBetaShareReturnTarget(null); setShowBetaShareModal(true) }}
           className="text-white/50 transition hover:text-white"
         >
           Invite someone to beta
@@ -10382,7 +10832,7 @@ async function runRefinedDiagnosticNow() {
     recordEmergencyEvent({
       type: "feedback_submitted",
       sessionId: supportSessionId,
-      appVersion: "v1.0.7-beta",
+      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:

@@ -1,4 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Safe Repair Preview: Fix Modded Game Crashes Safely | FixMyGame",
+  description:
+    "Learn what Safe Repair Preview means, why FixMyGame shows planned fixes first, and how backups help protect your modded game files.",
+  alternates: {
+    canonical: "/guides/safe-repair-preview",
+  },
+  openGraph: {
+    title: "Safe Repair Preview: Fix Modded Game Crashes Safely",
+    description:
+      "A beginner-friendly guide to safe repair previews, backups, undo steps, and safer mod troubleshooting.",
+    url: "/guides/safe-repair-preview",
+    siteName: "FixMyGame",
+    type: "article",
+  },
+};
 
 const safeRepairCanDo = [
   {
@@ -28,8 +46,25 @@ const beforeRepairChecklist = [
 ];
 
 export default function SafeRepairPreviewPage() {
+  const articleSchema = {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: "Safe Repair Preview: Fix Modded Game Crashes Safely",
+    description:
+      "A beginner-friendly guide to safe repair previews, backups, undo steps, and safer mod troubleshooting.",
+    author: { "@type": "Organization", name: "FixMyGame" },
+    publisher: { "@type": "Organization", name: "FixMyGame" },
+    mainEntityOfPage:
+      "https://fixmygame-site.vercel.app/guides/safe-repair-preview",
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleSchema) }}
+      />
+
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
 
       <div className="relative mx-auto min-h-screen w-full max-w-4xl px-6 py-8 md:px-10">
@@ -55,15 +90,25 @@ export default function SafeRepairPreviewPage() {
           </div>
 
           <h1 className="mt-5 text-4xl font-black tracking-tight md:text-6xl">
-            Safe Repair Preview
+            Safe Repair Preview: Fix Modded Game Crashes Safely
           </h1>
 
           <p className="mt-6 text-lg leading-8 text-white/72">
-            Safe Repair Preview is meant to show what FixMyGame thinks should be
-            done before it changes anything. The point is to help users fix
-            broken setups without blindly deleting mods, moving files, or making
-            changes they cannot undo.
+            Safe Repair Preview shows what FixMyGame thinks should be done
+            before anything changes. The goal is to help users fix broken setups
+            without blindly deleting mods, moving files, or making changes they
+            cannot undo.
           </p>
+
+          <section className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-6">
+            <h2 className="text-2xl font-bold">Quick answer</h2>
+            <p className="mt-3 leading-7 text-white/70">
+              Safe Repair Preview means FixMyGame shows the planned repair
+              before touching your files. A good repair should explain the
+              issue, show what will change, use backups when possible, and keep
+              risky fixes manual.
+            </p>
+          </section>
 
           <section className="mt-10 rounded-[28px] border border-cyan-400/15 bg-cyan-400/10 p-6">
             <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
@@ -140,21 +185,57 @@ export default function SafeRepairPreviewPage() {
             </p>
           </section>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/guides/verify-or-reinstall-game-files"
-              className="inline-flex items-center rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
-            >
-              Next: Verify or reinstall files →
-            </Link>
+          <section className="mt-10">
+            <h2 className="text-2xl font-bold">Related Guides</h2>
 
-            <Link
-              href="/guides"
-              className="inline-flex items-center rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
-            >
-              View all guides
-            </Link>
-          </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <Link
+                href="/guides/mod-conflicts"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Mod Conflicts</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Learn why removing one suspicious mod at a time is safer than
+                  deleting everything.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/missing-dependencies"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Missing Dependencies</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Understand when the safest fix is installing a required mod or
+                  library.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/verify-or-reinstall-game-files"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">
+                  Verify or Reinstall Game Files
+                </h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Know when a repair should stay manual because the game files
+                  may be damaged.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/how-to-read-a-crash-log"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">How to Read a Crash Log</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Learn what clues FixMyGame looks for before suggesting a
+                  repair.
+                </p>
+              </Link>
+            </div>
+          </section>
         </main>
       </div>
     </div>

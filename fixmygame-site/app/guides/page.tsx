@@ -1,24 +1,38 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata = {
-  title: "FixMyGame Guides | Crash Log Help for Modded PC Games",
+export const metadata: Metadata = {
+  title: "FixMyGame Guides | Crash Log & Modded Game Help",
   description:
-    "Beginner-friendly FixMyGame guides for Minecraft crash errors, Java version issues, missing dependencies, SMAPI logs, BepInEx logs, mod conflicts, and safe repair previews.",
+    "Beginner-friendly guides for crash logs, missing dependencies, mod conflicts, SMAPI logs, BepInEx logs, Minecraft errors, and safe repair previews.",
+  alternates: {
+    canonical: "/guides",
+  },
+  openGraph: {
+    title: "FixMyGame Guides",
+    description:
+      "Crash log help, mod troubleshooting guides, missing dependency fixes, and safer repair steps for modded PC games.",
+    url: "/guides",
+    siteName: "FixMyGame",
+    type: "website",
+  },
 };
+
 const guideSections = [
   {
     title: "Start Here",
-    description: "Basic FixMyGame and crash-log help before you start changing files.",
+    description:
+      "Basic FixMyGame and crash-log help before you start changing files.",
     guides: [
       {
-        title: "How to read a crash log",
+        title: "How to Read a Crash Log",
         description:
           "Learn what parts of a crash log actually matter and what can usually be ignored.",
         tag: "Beginner",
         href: "/guides/how-to-read-a-crash-log",
       },
       {
-        title: "Fresh log vs old log",
+        title: "Fresh Log vs Old Log",
         description:
           "Why FixMyGame needs the newest log after a crash, not an older healthy session.",
         tag: "Important",
@@ -69,17 +83,18 @@ const guideSections = [
   },
   {
     title: "FixMyGame Help",
-    description: "General troubleshooting concepts FixMyGame uses when reading logs.",
+    description:
+      "General troubleshooting concepts FixMyGame uses when reading logs.",
     guides: [
       {
-        title: "Missing dependencies",
+        title: "Missing Dependencies",
         description:
           "What it means when a mod needs another mod installed before it can work.",
         tag: "Mods",
         href: "/guides/missing-dependencies",
       },
       {
-        title: "Mod conflicts",
+        title: "Mod Conflicts",
         description:
           "How two mods can break each other and why removing one is sometimes the fix.",
         tag: "Troubleshooting",
@@ -93,7 +108,7 @@ const guideSections = [
         href: "/guides/safe-repair-preview",
       },
       {
-        title: "When to reinstall or verify files",
+        title: "Verify or Reinstall Game Files",
         description:
           "Know when the issue is probably game files instead of your mods.",
         tag: "Game Files",
@@ -104,19 +119,35 @@ const guideSections = [
 ];
 
 export default function GuidesPage() {
+  const collectionSchema = {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    name: "FixMyGame Guides",
+    description:
+      "Beginner-friendly crash log and modded PC game troubleshooting guides.",
+    url: "https://fixmygame-site.vercel.app/guides",
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(collectionSchema),
+        }}
+      />
+
+      <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-6 py-6 md:px-10">
-          <div className="pt-2">
-  <Link
-    href="/"
-    className="inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/15 hover:text-cyan-100"
-  >
-    ← FixMyGame Home
-  </Link>
-</div>
+        <div className="pt-2">
+          <Link
+            href="/"
+            className="inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/15 hover:text-cyan-100"
+          >
+            ← FixMyGame Home
+          </Link>
+        </div>
 
         <main className="flex-1">
           <section className="py-12 md:py-7">
@@ -126,57 +157,62 @@ export default function GuidesPage() {
               </div>
 
               <h1 className="mt-5 text-5xl font-black tracking-tight md:text-7xl">
-                Learn what broke.
+                Crash log help for
                 <span className="block text-cyan-300">
-                  Fix it with less guessing.
+                  modded PC games.
                 </span>
               </h1>
 
               <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-white/72 md:text-lg">
-                Simple guides for crash logs, mod conflicts, missing
-                dependencies, and safer troubleshooting before you start
-                deleting files.
+                Beginner-friendly guides for crash logs, missing dependencies,
+                mod conflicts, loader errors, corrupted game files, and safer
+                troubleshooting before you start deleting mods.
               </p>
             </div>
 
-            <div className="mt-12 space-y-12">
-  {guideSections.map((section) => (
-    <section key={section.title}>
-      <div>
-        <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
-          {section.title}
-        </div>
+            <div className="mt-10 space-y-10">
+              {guideSections.map((section) => (
+                <section key={section.title}>
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
+                      {section.title}
+                    </div>
 
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
-          {section.description}
-        </p>
-      </div>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
+                      {section.description}
+                    </p>
+                  </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {section.guides.map((guide) => (
-          <article
-            key={guide.title}
-            className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur transition hover:border-cyan-400/30 hover:bg-white/[0.07]"
-          >
-            <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-              {guide.tag}
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    {section.guides.map((guide) => (
+                      <Link
+                        key={guide.title}
+                        href={guide.href}
+                        className="rounded-[22px] border border-white/10 bg-white/[0.035] p-4 transition hover:border-cyan-400/30 hover:bg-white/[0.055]"
+                      >
+                        <article>
+                          <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+                            {guide.tag}
+                          </div>
+
+                          <h2 className="text-lg font-semibold leading-snug">
+  {guide.title}
+</h2>
+
+                          <p className="mt-2 text-sm leading-6 text-white/62">
+  {guide.description}
+</p>
+
+                          <div className="mt-5 text-sm font-semibold text-cyan-300">
+                            Open guide →
+                          </div>
+                        </article>
+                      </Link>
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
-
-            <h2 className="text-xl font-semibold">{guide.title}</h2>
-
-            <p className="mt-3 text-sm leading-6 text-white/68">
-              {guide.description}
-            </p>
-
-            <div className="mt-5 text-sm font-semibold text-cyan-300">
-              <Link href={guide.href}>Open guide →</Link>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  ))}
-</div>
           </section>
 
           <section className="py-8 md:py-14">
@@ -190,32 +226,28 @@ export default function GuidesPage() {
               </h2>
 
               <p className="mt-3 max-w-2xl text-white/72">
-                If your game crashed, open the newest crash or error log created
-                after the problem happened. Old logs can look healthy even when
-                the newest session is broken.
+                If your game crashed, recreate the issue first, then open the
+                newest crash or error log created after the problem happened.
+                Old logs can look healthy even when the newest session is
+                broken.
               </p>
 
               <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                  <div className="text-lg font-bold text-cyan-300">1</div>
-                  <div className="mt-2 text-sm text-white/75">
-                    Recreate the crash or issue.
+                {[
+                  "Recreate the crash or issue.",
+                  "Find the newest log file.",
+                  "Run it through FixMyGame.",
+                ].map((step, index) => (
+                  <div
+                    key={step}
+                    className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+                  >
+                    <div className="text-lg font-bold text-cyan-300">
+                      {index + 1}
+                    </div>
+                    <div className="mt-2 text-sm text-white/75">{step}</div>
                   </div>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                  <div className="text-lg font-bold text-violet-300">2</div>
-                  <div className="mt-2 text-sm text-white/75">
-                    Find the newest log file.
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                  <div className="text-lg font-bold text-emerald-300">3</div>
-                  <div className="mt-2 text-sm text-white/75">
-                    Run it through FixMyGame.
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </section>

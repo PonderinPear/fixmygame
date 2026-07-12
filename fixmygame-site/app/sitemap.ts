@@ -8,8 +8,19 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     "",
     "/guides",
+
+    // Start Here
     "/guides/how-to-read-a-crash-log",
     "/guides/fresh-log-vs-old-log",
+
+    // Crash Fix Library
+    "/guides/minecraft-jei-classnotfoundexception-fix",
+    "/guides/minecraft-unsupportedclassversionerror-java-17-fix",
+    "/guides/minecraft-fabric-api-missing-dependency-fix",
+    "/guides/stardew-smapi-empty-folder-skipped-mod-fix",
+    "/guides/lethal-company-bepinex-logoutput-fix",
+
+    // FixMyGame Help
     "/guides/missing-dependencies",
     "/guides/mod-conflicts",
     "/guides/safe-repair-preview",

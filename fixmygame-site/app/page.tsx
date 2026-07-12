@@ -1,4 +1,39 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "FixMyGame | Crash Log Help for Modded PC Games",
+  description:
+    "FixMyGame helps diagnose modded PC game crashes, missing dependencies, mod conflicts, loader errors, and broken crash logs with clearer next steps.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "FixMyGame",
+    description:
+      "Crash log diagnostics and guided troubleshooting for modded PC games.",
+    url: "/",
+    siteName: "FixMyGame",
+    type: "website",
+  },
+};
 export default function FixMyGameWebsite() {
+    const websiteSchema = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "FixMyGame",
+    applicationCategory: "UtilitiesApplication",
+    operatingSystem: "Windows",
+    description:
+      "FixMyGame helps diagnose crash logs, missing dependencies, mod conflicts, loader errors, and modded PC game crashes.",
+    url: "https://fixmygame-site.vercel.app",
+    offers: {
+      "@type": "Offer",
+      availability: "https://schema.org/LimitedAvailability",
+      price: "0",
+      priceCurrency: "USD",
+    },
+  };
+
   const supportedGames = [
     "Minecraft",
     "The Sims 4",
@@ -12,7 +47,7 @@ export default function FixMyGameWebsite() {
     "+ More coming",
   ];
 
-  const features = [
+  const whatFixMyGameDoes = [
     {
       title: "Find the issue",
       description: "Detect mod conflicts and broken logs instantly",
@@ -81,11 +116,17 @@ export default function FixMyGameWebsite() {
   const supportUrl = "mailto:fixmygame.support@gmail.com";
   const termsUrl =
     "https://www.notion.so/fixmygame/FixMyGame-Terms-of-Service-348948d924788019abe8cb5e79581c76?source=copy_link";
+  const donationUrl = "https://ko-fi.com/fixmygame";
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
-
+            <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(websiteSchema),
+        }}
+      />
+<div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_12%_18%,rgba(34,211,238,0.14),transparent_28%),radial-gradient(circle_at_82%_18%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_52%_78%,rgba(59,130,246,0.12),transparent_34%)]" />
       <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-6 py-6 md:px-10">
         <header className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
           <div>
@@ -98,8 +139,8 @@ export default function FixMyGameWebsite() {
           </div>
 
           <nav className="hidden items-center gap-6 text-sm text-white/75 md:flex">
-            <a href="#features" className="hover:text-white">
-              Features
+            <a href="#core-features" className="hover:text-white">
+              Core Features
             </a>
             <a href="#supported" className="hover:text-white">
               Supported Games
@@ -281,10 +322,10 @@ export default function FixMyGameWebsite() {
             </div>
           </section>
 
-          <section id="features" className="py-8 md:py-14">
+          <section id="core-features" className="py-8 md:py-14">
             <div className="mb-6">
               <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/70">
-                Features
+                Core Features
               </div>
               <h2 className="mt-2 text-3xl font-bold md:text-4xl">
                 No more guessing what broke your game
@@ -292,7 +333,7 @@ export default function FixMyGameWebsite() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {features.map((feature) => (
+              {whatFixMyGameDoes.map((feature) => (
                 <div
                   key={feature.title}
                   className="rounded-[24px] border border-white/10 bg-white/5 p-5 backdrop-blur"
@@ -365,7 +406,7 @@ export default function FixMyGameWebsite() {
           <section id="how" className="py-8 md:py-14">
             <div className="mx-auto max-w-6xl px-6">
               <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-                From crash log to next move
+                How It Works
               </h2>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -459,6 +500,38 @@ export default function FixMyGameWebsite() {
             </div>
           </section>
 
+                    <section id="support-fixmygame" className="py-8 md:py-14">
+            <div className="rounded-[28px] border border-cyan-400/20 bg-white/5 p-6 md:p-8">
+              <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
+                Optional support
+              </div>
+
+              <h3 className="mt-2 text-2xl font-bold md:text-3xl">
+                Support FixMyGame
+              </h3>
+
+              <p className="mt-3 max-w-2xl text-white/72">
+                FixMyGame beta is free to test. If the app helped you or you
+                want to support continued development, optional donations help
+                cover hosting, testing, bug review, and future app updates.
+              </p>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                <a
+                  href={donationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                >
+                  Support FixMyGame
+                </a>
+              </div>
+
+              <p className="mt-4 text-sm text-white/50">
+                Donations are optional and are not required for beta access.
+              </p>
+            </div>
+          </section>
           <section id="faq" className="py-8 md:py-14">
             <div className="mb-6">
               <div className="text-sm font-semibold uppercase tracking-[0.2em] text-orange-200/70">

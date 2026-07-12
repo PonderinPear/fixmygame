@@ -1,4 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Verify or Reinstall Game Files: What to Try First | FixMyGame",
+  description:
+    "Learn when to verify game files, when to reinstall, and why checking corrupted or missing base game files is safer before deleting mods.",
+  alternates: {
+    canonical: "/guides/verify-or-reinstall-game-files",
+  },
+  openGraph: {
+    title: "Verify or Reinstall Game Files: What to Try First",
+    description:
+      "A beginner-friendly guide to verifying game files, corrupted installs, launcher repair tools, and safer reinstall decisions.",
+    url: "/guides/verify-or-reinstall-game-files",
+    siteName: "FixMyGame",
+    type: "article",
+  },
+};
 
 const whenToVerify = [
   {
@@ -28,8 +46,25 @@ const repairOrder = [
 ];
 
 export default function VerifyOrReinstallGameFilesPage() {
+  const articleSchema = {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: "Verify or Reinstall Game Files: What to Try First",
+    description:
+      "A beginner-friendly guide to verifying game files, corrupted installs, launcher repair tools, and safer reinstall decisions.",
+    author: { "@type": "Organization", name: "FixMyGame" },
+    publisher: { "@type": "Organization", name: "FixMyGame" },
+    mainEntityOfPage:
+      "https://fixmygame-site.vercel.app/guides/verify-or-reinstall-game-files",
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleSchema) }}
+      />
+
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
 
       <div className="relative mx-auto min-h-screen w-full max-w-4xl px-6 py-8 md:px-10">
@@ -55,7 +90,7 @@ export default function VerifyOrReinstallGameFilesPage() {
           </div>
 
           <h1 className="mt-5 text-4xl font-black tracking-tight md:text-6xl">
-            Verify or reinstall game files
+            Verify or Reinstall Game Files: What to Try First
           </h1>
 
           <p className="mt-6 text-lg leading-8 text-white/72">
@@ -64,6 +99,15 @@ export default function VerifyOrReinstallGameFilesPage() {
             Verifying files is usually safer than reinstalling because it checks
             the install first without wiping everything.
           </p>
+
+          <section className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-6">
+            <h2 className="text-2xl font-bold">Quick answer</h2>
+            <p className="mt-3 leading-7 text-white/70">
+              Verify game files first if the game crashes without mods, files
+              were moved or deleted, or the launcher reports a damaged install.
+              Reinstall only after backing up saves and trying verification.
+            </p>
+          </section>
 
           <section className="mt-10 rounded-[28px] border border-cyan-400/15 bg-cyan-400/10 p-6">
             <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
@@ -122,9 +166,7 @@ export default function VerifyOrReinstallGameFilesPage() {
           </section>
 
           <section className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-6">
-            <h2 className="text-2xl font-bold">
-              Verify before you reinstall
-            </h2>
+            <h2 className="text-2xl font-bold">Verify before you reinstall</h2>
 
             <p className="mt-3 leading-7 text-white/70">
               Reinstalling can take longer and may remove local files depending
@@ -145,21 +187,55 @@ export default function VerifyOrReinstallGameFilesPage() {
             </p>
           </section>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/guides/how-to-read-a-crash-log"
-              className="inline-flex items-center rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
-            >
-              Back to first guide →
-            </Link>
+          <section className="mt-10">
+            <h2 className="text-2xl font-bold">Related Guides</h2>
 
-            <Link
-              href="/guides"
-              className="inline-flex items-center rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
-            >
-              View all guides
-            </Link>
-          </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <Link
+                href="/guides/safe-repair-preview"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Safe Repair Preview</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Learn why FixMyGame previews safer repairs before changing
+                  files.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/mod-conflicts"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Mod Conflicts</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Rule out mod conflicts before assuming the whole game install
+                  is broken.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/missing-dependencies"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Missing Dependencies</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Check whether the crash is really caused by a missing required
+                  mod.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/how-to-read-a-crash-log"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">How to Read a Crash Log</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Learn how to tell whether the log points to mods or base game
+                  files.
+                </p>
+              </Link>
+            </div>
+          </section>
         </main>
       </div>
     </div>

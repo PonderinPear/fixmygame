@@ -1,38 +1,51 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
-const clueCards = [
-  {
-    title: "The newest error",
-    text: "Look near the bottom of the log first. The most recent error is usually more useful than random warnings at the top.",
+export const metadata: Metadata = {
+  title: "Fresh Log vs Old Log: Why the Newest Crash Log Matters | FixMyGame",
+  description:
+    "Learn why the newest crash log is usually the only useful one when diagnosing modded PC game crashes, missing dependencies, mod conflicts, and loader errors.",
+  alternates: {
+    canonical: "/guides/fresh-log-vs-old-log",
   },
-  {
-    title: "A repeated mod name",
-    text: "If the same mod, file, or folder name keeps appearing around errors, that mod is worth checking first.",
+  openGraph: {
+    title: "Fresh Log vs Old Log: Why the Newest Crash Log Matters",
+    description:
+      "A beginner-friendly guide explaining why old logs can hide the real crash and why FixMyGame needs the newest log.",
+    url: "/guides/fresh-log-vs-old-log",
+    siteName: "FixMyGame",
+    type: "article",
   },
-  {
-    title: "Missing dependency messages",
-    text: "These usually mean a mod is installed, but one of the extra mods it needs is missing or outdated.",
-  },
-  {
-    title: "Version mismatch messages",
-    text: "These happen when the game, mod loader, or mod version does not match what the setup expects.",
-  },
-  {
-    title: "The final crash reason",
-    text: "The final exception or crash reason can point to the real problem, even when the log has a lot of noise.",
-  },
-];
+};
 
-const ignoreForNow = [
-  "One-time warnings that do not repeat",
-  "Old errors from a previous game session",
-  "Normal loading messages",
-  "Huge sections of technical text with no mod name nearby",
-];
+export default function FreshLogVsOldLogPage() {
+  const articleSchema = {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    headline: "Fresh Log vs Old Log: Why the Newest Crash Log Matters",
+    description:
+      "A beginner-friendly guide explaining why old logs can hide the real crash and why FixMyGame needs the newest log.",
+    author: {
+      "@type": "Organization",
+      name: "FixMyGame",
+    },
+    publisher: {
+      "@type": "Organization",
+      name: "FixMyGame",
+    },
+    mainEntityOfPage:
+      "https://fixmygame-site.vercel.app/guides/fresh-log-vs-old-log",
+  };
 
-export default function HowToReadCrashLogPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(articleSchema),
+        }}
+      />
+
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(168,85,247,0.14),transparent_30%),radial-gradient(circle_at_50%_80%,rgba(59,130,246,0.12),transparent_30%)]" />
 
       <div className="relative mx-auto min-h-screen w-full max-w-4xl px-6 py-8 md:px-10">
@@ -54,70 +67,52 @@ export default function HowToReadCrashLogPage() {
 
         <main className="py-12 md:py-7">
           <div className="inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-            Beginner
+            Important
           </div>
 
           <h1 className="mt-5 text-4xl font-black tracking-tight md:text-6xl">
-            How to read a crash log
+            Fresh Log vs Old Log: Why the Newest Crash Log Matters
           </h1>
 
           <p className="mt-6 text-lg leading-8 text-white/72">
-            Crash logs look overwhelming, but you do not need to understand
-            every line. Most of the time, you are looking for a few useful clues:
-            the newest error, a repeated mod name, a missing dependency, a
-            version mismatch, or the final crash reason.
+            A fresh log is the crash or error log created right after the
+            problem happens. An old log may come from a different session and
+            can make the issue look completely different from what actually
+            broke.
           </p>
 
-          <section className="mt-10 rounded-[28px] border border-cyan-400/15 bg-cyan-400/10 p-6">
-            <div className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-200/80">
-              First rule
-            </div>
-
-            <h2 className="mt-2 text-2xl font-bold">
-              Start with the newest log
-            </h2>
-
-            <p className="mt-3 leading-7 text-white/75">
-              Use the log created right after the crash or problem happened. An
-              old log can look normal because it may be from a healthy game
-              session, not the broken one.
-            </p>
-          </section>
-
-          <section className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-6">
-            <h2 className="text-2xl font-bold">What to look for</h2>
-
-            <div className="mt-5 grid gap-3">
-              {clueCards.map((item) => (
-                <div
-                  key={item.title}
-                  className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
-                >
-                  <div className="font-semibold text-cyan-200">
-                    {item.title}
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-white/68">
-                    {item.text}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-6">
-            <h2 className="text-2xl font-bold">What you can ignore at first</h2>
-
+          <section className="mt-8 rounded-[28px] border border-white/10 bg-white/5 p-6">
+            <h2 className="text-2xl font-bold">Quick answer</h2>
             <p className="mt-3 leading-7 text-white/70">
-              Not every scary-looking line is the real issue. Logs can include
-              harmless warnings, normal loading messages, and old information
-              from earlier sessions.
+              Use the newest log created immediately after the crash. If you
+              upload an older log, FixMyGame may diagnose a past warning,
+              normal startup message, or healthy session instead of the real
+              crash.
             </p>
+          </section>
 
+          <section className="mt-6 rounded-[28px] border border-cyan-400/15 bg-cyan-400/10 p-6">
+            <h2 className="text-2xl font-bold">What is a fresh log?</h2>
+            <p className="mt-3 leading-7 text-white/75">
+              A fresh log is made during the same session where the crash,
+              freeze, failed launch, or mod error happened. It is the log most
+              likely to include the real final error, missing dependency,
+              version mismatch, or mod conflict.
+            </p>
+          </section>
+
+          <section className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-6">
+            <h2 className="text-2xl font-bold">Why old logs can be misleading</h2>
             <div className="mt-5 grid gap-3">
-              {ignoreForNow.map((item) => (
+              {[
+                "They may be from a session where the game loaded normally.",
+                "They may show warnings that are unrelated to the current crash.",
+                "They may point to a mod you already fixed or removed.",
+                "They may hide the newest final crash reason.",
+              ].map((item) => (
                 <div
                   key={item}
-                  className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white/75"
+                  className="rounded-xl border border-white/10 bg-slate-950/60 px-4 py-3 text-white/75"
                 >
                   {item}
                 </div>
@@ -126,15 +121,14 @@ export default function HowToReadCrashLogPage() {
           </section>
 
           <section className="mt-6 rounded-[28px] border border-white/10 bg-white/5 p-6">
-            <h2 className="text-2xl font-bold">Simple crash log checklist</h2>
-
+            <h2 className="text-2xl font-bold">How to get the right log</h2>
             <div className="mt-5 space-y-3">
               {[
-                "Did this log happen after the crash?",
-                "Does the same mod name appear more than once?",
-                "Does it say something is missing or required?",
-                "Does it mention the wrong game, mod, or loader version?",
-                "Does the bottom of the log show a clearer crash reason?",
+                "Open the game or mod loader.",
+                "Recreate the crash or error.",
+                "Close the game after the issue happens.",
+                "Find the newest crash, error, SMAPI, BepInEx, Forge, Fabric, or loader log.",
+                "Upload that newest file into FixMyGame.",
               ].map((item, index) => (
                 <div
                   key={item}
@@ -151,29 +145,39 @@ export default function HowToReadCrashLogPage() {
 
           <section className="mt-6 rounded-[28px] border border-cyan-400/15 bg-cyan-400/10 p-6">
             <h2 className="text-2xl font-bold">FixMyGame tip</h2>
-
             <p className="mt-3 leading-7 text-white/75">
-              If FixMyGame says no clear issue was found, recreate the crash and
-              load the newest log after the issue happens again. A healthy log
-              usually means the app did not receive the broken session yet.
+              If a diagnosis looks wrong, recreate the crash and upload the
+              newest log again. A better log usually means a better diagnosis.
             </p>
           </section>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/guides/fresh-log-vs-old-log"
-              className="inline-flex items-center rounded-2xl bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
-            >
-              Next: Fresh log vs old log →
-            </Link>
+          <section className="mt-10">
+            <h2 className="text-2xl font-bold">Related Guides</h2>
 
-            <Link
-              href="/guides"
-              className="inline-flex items-center rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
-            >
-              View all guides
-            </Link>
-          </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <Link
+                href="/guides/how-to-read-a-crash-log"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">How to Read a Crash Log</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Learn what parts of a crash log matter most when diagnosing a
+                  crash.
+                </p>
+              </Link>
+
+              <Link
+                href="/guides/missing-dependencies"
+                className="rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              >
+                <h3 className="font-semibold">Missing Dependencies</h3>
+                <p className="mt-2 text-sm text-white/65">
+                  Understand errors caused by required mods that are missing or
+                  outdated.
+                </p>
+              </Link>
+            </div>
+          </section>
         </main>
       </div>
     </div>
