@@ -6,7 +6,7 @@ import { isProUser } from "@/lib/pro";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-fmg-device-id",
+  "Access-Control-Allow-Headers": "Content-Type, x-fmg-device-id, x-fmg-app-version, x-fmg-build-channel",
 };
 
 function jsonResponse(data: unknown, status = 200) {
@@ -30,6 +30,31 @@ const openai = new OpenAI({
 });
 
 const DAILY_LIMIT = 3;
+
+const MIN_SUPPORTED_BETA_VERSION = "1.0.9";
+
+function parseAppVersion(version: string) {
+  return String(version || "")
+    .replace(/^v/i, "")
+    .split(".")
+    .map((part) => Number(part.replace(/[^0-9]/g, "")) || 0)
+    .slice(0, 3);
+}
+
+function isVersionBelow(currentVersion: string, minimumVersion: string) {
+  const current = parseAppVersion(currentVersion);
+  const minimum = parseAppVersion(minimumVersion);
+
+  for (let i = 0; i < 3; i++) {
+    const currentPart = current[i] || 0;
+    const minimumPart = minimum[i] || 0;
+
+    if (currentPart < minimumPart) return true;
+    if (currentPart > minimumPart) return false;
+  }
+
+  return false;
+}
 
 type DetectedSignals = {
   errorType?: string;
@@ -2050,6 +2075,22 @@ function buildDefaultExplanation(
 
 export async function POST(req: NextRequest) {
   try {
+    const appVersion = req.headers.get("x-fmg-app-version")?.trim() || "";
+    const buildChannel = req.headers.get("x-fmg-build-channel")?.trim() || "unknown";
+
+    if (!appVersion || isVersionBelow(appVersion, MIN_SUPPORTED_BETA_VERSION)) {
+      return jsonResponse(
+        {
+          error: `This beta version is no longer supported. Please download FixMyGame v${MIN_SUPPORTED_BETA_VERSION} from the official beta-download channel or approved Google Drive folder.`,
+          code: "unsupported_app_version",
+          currentVersion: appVersion || "unknown",
+          minimumVersion: MIN_SUPPORTED_BETA_VERSION,
+          buildChannel,
+        },
+        426,
+      );
+    }
+
     const redis = await getRedis();
 const betaValue = await redis.get("beta:open");
 const isBetaOpen = String(betaValue) === "1";

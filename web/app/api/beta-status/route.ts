@@ -7,6 +7,9 @@ export const revalidate = 0;
 
 const redis = Redis.fromEnv();
 
+const ACTIVE_BETA_VERSION = "1.0.9";
+const BUILD_CHANNEL = "beta";
+
 export async function GET() {
   let betaOpen = true;
   let redisValue: unknown = null;
@@ -25,14 +28,18 @@ if (redisValue !== null) {
 
   return NextResponse.json(
   {
-    betaOpen,
-    redisValue,
-    redisReadError,
-    debug: "beta-status-v3-live-redis",
-    message: betaOpen
-      ? "FixMyGame beta is active."
-      : "The FixMyGame beta period has ended. Access is currently closed.",
-  },
+  betaOpen,
+  redisValue,
+  redisReadError,
+  activeVersion: ACTIVE_BETA_VERSION,
+  minimumVersion: ACTIVE_BETA_VERSION,
+  buildChannel: BUILD_CHANNEL,
+  updateRequired: false,
+  debug: "beta-status-v4-version-gate",
+  message: betaOpen
+    ? "FixMyGame beta is active."
+    : "The FixMyGame beta period has ended. Access is currently closed.",
+},
   {
     headers: {
       "Access-Control-Allow-Origin": "*",

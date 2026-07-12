@@ -319,7 +319,7 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.8";
+const FIXMYGAME_APP_VERSION = "1.0.9";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 const FIXMYGAME_BETA_INVITE_URL = "https://fixmygame-site.vercel.app/";
 const FIXMYGAME_BETA_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScGcdRTg2kv4-_NKk1x2MkjSd1QsVItjKxi0ht--HNf1GLngQ/viewform"
@@ -404,10 +404,12 @@ async function fetchJSON<T>(
   const res = await fetch(input, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
-      "x-fmg-device-id": deviceId,
-      ...(init?.headers ?? {}),
-    },
+  "Content-Type": "application/json",
+  "x-fmg-device-id": deviceId,
+  "x-fmg-app-version": FIXMYGAME_APP_VERSION,
+  "x-fmg-build-channel": FIXMYGAME_BUILD_CHANNEL,
+  ...(init?.headers ?? {}),
+},
   });
 
   const text = await res.text();
@@ -6550,13 +6552,19 @@ if (savedAuthorization === "true") {
       return;
     }
 
-    const freshBeta = await fetchJSON<{ betaOpen: boolean; message?: string }>(
-      `${API_BASE_URL}/api/beta-status?t=${Date.now()}`,
-      {
-        method: "GET",
-        cache: "no-store",
-      },
-    );
+    const freshBeta = await fetchJSON<{
+  betaOpen: boolean;
+  message?: string;
+  activeVersion?: string;
+  minimumVersion?: string;
+  buildChannel?: string;
+}>(
+  `${API_BASE_URL}/api/beta-status?t=${Date.now()}`,
+  {
+    method: "GET",
+    cache: "no-store",
+  },
+);
 
     setBetaOpen(Boolean(freshBeta.betaOpen));
     setBetaMessage(freshBeta.message || "");
@@ -6569,6 +6577,16 @@ if (savedAuthorization === "true") {
       );
       return;
     }
+    const requiredVersion =
+  freshBeta.minimumVersion || freshBeta.activeVersion || "";
+
+if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
+  setRunning(false);
+  setErrorMsg(
+    `This beta version is no longer supported. Please download FixMyGame v${requiredVersion} from the official beta-download channel or approved Google Drive folder.`,
+  );
+  return;
+}
 
     if (!canRun) {
       setErrorMsg(
