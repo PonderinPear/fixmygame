@@ -2050,26 +2050,54 @@ function buildDefaultExplanation(
 
 export async function POST(req: NextRequest) {
   try {
-    const redis = await getRedis();
-const betaValue = await redis.get("beta:open");
-const isBetaOpen = String(betaValue) === "1";
+    let isBetaOpen = true;
+    let isPro = req.cookies.get("fmg_pro")?.value === "1";
+    let count = 0;
 
-const redisPro = await isProUser(req);
-const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
-const isPro = redisPro || cookiePro;
+    try {
+      const redis = await getRedis();
+      const betaValue = await Promise.race([
+        redis.get("beta:open"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Redis beta check timed out")), 1500),
+        ),
+      ]);
 
-let count = 0;
+      isBetaOpen = String(betaValue) === "1";
+    } catch (error) {
+      console.error("Redis beta check failed open:", error);
+      isBetaOpen = true;
+    }
 
-if (!isBetaOpen && !isPro) {
-  count = await incrementAndGetCount(req);
+    try {
+      const redisPro = await Promise.race([
+        isProUser(req),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
+      ]);
 
-  if (count > DAILY_LIMIT) {
-    return jsonResponse(
-      { error: "Daily limit reached.", remaining: 0, isPro: false, isBeta: false },
-      429
-    );
-  }
-}
+      isPro = isPro || Boolean(redisPro);
+    } catch (error) {
+      console.error("Redis pro check failed:", error);
+    }
+
+    if (!isBetaOpen && !isPro) {
+      try {
+        count = await Promise.race([
+          incrementAndGetCount(req),
+          new Promise<number>((resolve) => setTimeout(() => resolve(0), 1500)),
+        ]);
+      } catch (error) {
+        console.error("Redis limit check failed open:", error);
+        count = 0;
+      }
+
+      if (count > DAILY_LIMIT) {
+        return jsonResponse(
+          { error: "Daily limit reached.", remaining: 0, isPro: false, isBeta: false },
+          429
+        );
+      }
+    }
 
     const body = await req.json();
     const {
