@@ -114,35 +114,85 @@ function getClientKey(req: NextRequest) {
   return `unknown:${crypto.randomUUID()}`;
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  fallback: T,
+  label: string,
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) =>
+      setTimeout(() => {
+        console.error(`${label} timed out after ${ms}ms`);
+        resolve(fallback);
+      }, ms),
+    ),
+  ]);
+}
+
 async function getRemaining(req: NextRequest) {
-  const redisPro = await isProUser(req);
   const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
+
+  const redisPro = await withTimeout(
+    isProUser(req),
+    1500,
+    false,
+    "Redis pro check in getRemaining",
+  );
+
   const isPro = redisPro || cookiePro;
-  if (isPro) return { isPro: true, remaining: Infinity };
+  if (isPro) return { isPro: true, remaining: 999, limit: 999, isBeta: true };
 
-  const clientKey = getClientKey(req);
-  const key = `limit:${today()}:${clientKey}`;
+  try {
+    const clientKey = getClientKey(req);
+    const key = `limit:${today()}:${clientKey}`;
 
-  const redis = await getRedis();
-  const currentRaw = await redis.get(key);
-  const current = currentRaw ? Number(currentRaw) : 0;
+    const redis = await getRedis();
+    const currentRaw = await withTimeout(
+      redis.get(key),
+      1500,
+      0,
+      "Redis remaining check",
+    );
 
-  const remaining = Math.max(0, DAILY_LIMIT - current);
-  return { isPro: false, remaining };
+    const current = currentRaw ? Number(currentRaw) : 0;
+    const remaining = Math.max(0, DAILY_LIMIT - current);
+
+    return { isPro: false, remaining, limit: DAILY_LIMIT, isBeta: false };
+  } catch (error) {
+    console.error("getRemaining failed open:", error);
+    return { isPro: false, remaining: 999, limit: 999, isBeta: true };
+  }
 }
 
 async function incrementAndGetCount(req: NextRequest) {
-  const clientKey = getClientKey(req);
-  const key = `limit:${today()}:${clientKey}`;
+  try {
+    const clientKey = getClientKey(req);
+    const key = `limit:${today()}:${clientKey}`;
 
-  const redis = await getRedis();
-  const count = await redis.incr(key);
+    const redis = await getRedis();
+    const count = await withTimeout(
+      redis.incr(key),
+      1500,
+      0,
+      "Redis increment limit check",
+    );
 
-  if (count === 1) {
-    await redis.expire(key, 60 * 60 * 48);
+    if (count === 1) {
+      await withTimeout(
+        redis.expire(key, 60 * 60 * 48),
+        1500,
+        0,
+        "Redis expire limit key",
+      );
+    }
+
+    return count;
+  } catch (error) {
+    console.error("incrementAndGetCount failed open:", error);
+    return 0;
   }
-
-  return count;
 }
 
 function getRelevantLogWindow(crashLog: string, gameKey = "") {
