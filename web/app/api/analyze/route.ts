@@ -139,35 +139,85 @@ function getClientKey(req: NextRequest) {
   return `unknown:${crypto.randomUUID()}`;
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  fallback: T,
+  label: string,
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) =>
+      setTimeout(() => {
+        console.error(`${label} timed out after ${ms}ms`);
+        resolve(fallback);
+      }, ms),
+    ),
+  ]);
+}
+
 async function getRemaining(req: NextRequest) {
-  const redisPro = await isProUser(req);
   const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
+
+  const redisPro = await withTimeout(
+    isProUser(req),
+    1500,
+    false,
+    "Redis pro check in getRemaining",
+  );
+
   const isPro = redisPro || cookiePro;
-  if (isPro) return { isPro: true, remaining: Infinity };
+  if (isPro) return { isPro: true, remaining: 999, limit: 999, isBeta: true };
 
-  const clientKey = getClientKey(req);
-  const key = `limit:${today()}:${clientKey}`;
+  try {
+    const clientKey = getClientKey(req);
+    const key = `limit:${today()}:${clientKey}`;
 
-  const redis = await getRedis();
-  const currentRaw = await redis.get(key);
-  const current = currentRaw ? Number(currentRaw) : 0;
+    const redis = await getRedis();
+    const currentRaw = await withTimeout(
+  redis.get(key),
+  1500,
+  null,
+  "Redis remaining check",
+);
 
-  const remaining = Math.max(0, DAILY_LIMIT - current);
-  return { isPro: false, remaining };
+    const current = currentRaw ? Number(currentRaw) : 0;
+    const remaining = Math.max(0, DAILY_LIMIT - current);
+
+    return { isPro: false, remaining, limit: DAILY_LIMIT, isBeta: false };
+  } catch (error) {
+    console.error("getRemaining failed open:", error);
+    return { isPro: false, remaining: 999, limit: 999, isBeta: true };
+  }
 }
 
 async function incrementAndGetCount(req: NextRequest) {
-  const clientKey = getClientKey(req);
-  const key = `limit:${today()}:${clientKey}`;
+  try {
+    const clientKey = getClientKey(req);
+    const key = `limit:${today()}:${clientKey}`;
 
-  const redis = await getRedis();
-  const count = await redis.incr(key);
+    const redis = await getRedis();
+    const count = await withTimeout(
+      redis.incr(key),
+      1500,
+      0,
+      "Redis increment limit check",
+    );
 
-  if (count === 1) {
-    await redis.expire(key, 60 * 60 * 48);
+    if (count === 1) {
+      await withTimeout(
+        redis.expire(key, 60 * 60 * 48),
+        1500,
+        0,
+        "Redis expire limit key",
+      );
+    }
+
+    return count;
+  } catch (error) {
+    console.error("incrementAndGetCount failed open:", error);
+    return 0;
   }
-
-  return count;
 }
 
 function getRelevantLogWindow(crashLog: string, gameKey = "") {
@@ -2091,26 +2141,54 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const redis = await getRedis();
-const betaValue = await redis.get("beta:open");
-const isBetaOpen = String(betaValue) === "1";
+    let isBetaOpen = true;
+    let isPro = req.cookies.get("fmg_pro")?.value === "1";
+    let count = 0;
 
-const redisPro = await isProUser(req);
-const cookiePro = req.cookies.get("fmg_pro")?.value === "1";
-const isPro = redisPro || cookiePro;
+    try {
+      const redis = await getRedis();
+      const betaValue = await Promise.race([
+        redis.get("beta:open"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Redis beta check timed out")), 1500),
+        ),
+      ]);
 
-let count = 0;
+      isBetaOpen = String(betaValue) === "1";
+    } catch (error) {
+      console.error("Redis beta check failed open:", error);
+      isBetaOpen = true;
+    }
 
-if (!isBetaOpen && !isPro) {
-  count = await incrementAndGetCount(req);
+    try {
+      const redisPro = await Promise.race([
+        isProUser(req),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
+      ]);
 
-  if (count > DAILY_LIMIT) {
-    return jsonResponse(
-      { error: "Daily limit reached.", remaining: 0, isPro: false, isBeta: false },
-      429
-    );
-  }
-}
+      isPro = isPro || Boolean(redisPro);
+    } catch (error) {
+      console.error("Redis pro check failed:", error);
+    }
+
+    if (!isBetaOpen && !isPro) {
+      try {
+        count = await Promise.race([
+          incrementAndGetCount(req),
+          new Promise<number>((resolve) => setTimeout(() => resolve(0), 1500)),
+        ]);
+      } catch (error) {
+        console.error("Redis limit check failed open:", error);
+        count = 0;
+      }
+
+      if (count > DAILY_LIMIT) {
+        return jsonResponse(
+          { error: "Daily limit reached.", remaining: 0, isPro: false, isBeta: false },
+          429
+        );
+      }
+    }
 
     const body = await req.json();
     const {
