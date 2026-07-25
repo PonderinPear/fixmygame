@@ -329,6 +329,29 @@ const FIXMYGAME_DONATION_URL = "https://ko-fi.com/fixmygame";
 const WHATS_NEW_STORAGE_KEY = `fixmygame:whats-new-seen:${FIXMYGAME_APP_VERSION}`;
 
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
+const BETA_ACCESS_STORAGE_KEY = "fixmygame:beta-access";
+
+type BetaAccessState = {
+  betaId: string;
+  email: string;
+  verifiedUntil: string;
+  deviceId: string;
+};
+
+const DEFAULT_BETA_ACCESS: BetaAccessState = {
+  betaId: "",
+  email: "",
+  verifiedUntil: "",
+  deviceId: "",
+};
+
+function isBetaAccessCurrentlyVerified(betaAccess: BetaAccessState) {
+  if (!betaAccess.betaId || !betaAccess.email || !betaAccess.verifiedUntil) {
+    return false;
+  }
+
+  return new Date(betaAccess.verifiedUntil).getTime() > Date.now();
+}
 
 type AppSettings = {
   enableSafeFix: boolean;
@@ -3634,6 +3657,12 @@ export default function Page() {
   const [settingsTab, setSettingsTab] = useState<"privacy" | "app" | "Updates & Links">("privacy");
   const [appSettings, setAppSettings] =
     useState<AppSettings>(DEFAULT_APP_SETTINGS);
+  const [betaAccess, setBetaAccess] =
+    useState<BetaAccessState>(DEFAULT_BETA_ACCESS);
+  const [betaAccessEmailInput, setBetaAccessEmailInput] = useState("");
+  const [betaAccessIdInput, setBetaAccessIdInput] = useState("");
+  const [verifyingBetaAccess, setVerifyingBetaAccess] = useState(false);
+  const [betaAccessMessage, setBetaAccessMessage] = useState("");
   const [supportSessionId] = useState(() => crypto.randomUUID());
   const [supportEventHistory, setSupportEventHistory] = useState<
     {
@@ -3818,6 +3847,34 @@ export default function Page() {
       // ignore storage errors
     }
   }, [appSettings]);
+
+    useEffect(() => {
+    try {
+      const raw = localStorage.getItem(BETA_ACCESS_STORAGE_KEY);
+      if (!raw) return;
+
+      const saved = JSON.parse(raw) as Partial<BetaAccessState>;
+
+      const nextBetaAccess = {
+        ...DEFAULT_BETA_ACCESS,
+        betaId: String(saved.betaId || ""),
+        email: String(saved.email || ""),
+        verifiedUntil: String(saved.verifiedUntil || ""),
+        deviceId: String(saved.deviceId || ""),
+      };
+
+      setBetaAccess(nextBetaAccess);
+      setBetaAccessIdInput(nextBetaAccess.betaId);
+      setBetaAccessEmailInput(nextBetaAccess.email);
+    } catch (error) {
+      console.error("Failed to load beta access:", error);
+      setBetaAccess(DEFAULT_BETA_ACCESS);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(BETA_ACCESS_STORAGE_KEY, JSON.stringify(betaAccess));
+  }, [betaAccess]);
 
   useEffect(() => {
     if (!appSettings.autoDetectGames) {
@@ -6413,6 +6470,13 @@ if (savedAuthorization === "true") {
       sessionId: supportSessionId,
       appVersion: FIXMYGAME_APP_VERSION,
       buildChannel: FIXMYGAME_BUILD_CHANNEL,
+      betaAccess: {
+        betaId: betaAccess.betaId,
+        email: betaAccess.email,
+        verifiedUntil: betaAccess.verifiedUntil,
+        deviceId: betaAccess.deviceId,
+        verified: isBetaAccessCurrentlyVerified(betaAccess),
+      },
       eventType: params?.eventType || "manual_snapshot",
       eventDetail: params?.eventDetail || "",
       consent: {
@@ -6494,6 +6558,62 @@ if (savedAuthorization === "true") {
         },
       ],
     };
+  }
+
+    async function verifyBetaAccess() {
+    const betaId = betaAccessIdInput.trim().toUpperCase();
+    const email = betaAccessEmailInput.trim().toLowerCase();
+    const deviceId = getOrCreateDeviceId();
+
+    setVerifyingBetaAccess(true);
+    setBetaAccessMessage("");
+
+    try {
+      const response = await fetchJSON<{
+        ok: boolean;
+        betaId?: string;
+        email?: string;
+        deviceId?: string;
+        verifiedUntil?: string;
+        error?: string;
+      }>(`${API_BASE_URL}/api/beta-verify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-fmg-device-id": deviceId,
+        },
+        body: JSON.stringify({
+          betaId,
+          email,
+          deviceId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(response.error || "Beta verification failed.");
+      }
+
+      const nextBetaAccess = {
+        betaId: response.betaId || betaId,
+        email: response.email || email,
+        verifiedUntil: response.verifiedUntil || "",
+        deviceId: response.deviceId || deviceId,
+      };
+
+      setBetaAccess(nextBetaAccess);
+      setBetaAccessIdInput(nextBetaAccess.betaId);
+      setBetaAccessEmailInput(nextBetaAccess.email);
+      setBetaAccessMessage("Beta access verified on this device.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Beta verification failed. Please try again.";
+
+      setBetaAccessMessage(message);
+    } finally {
+      setVerifyingBetaAccess(false);
+    }
   }
 
   async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
@@ -9654,8 +9774,88 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                       </ul>
                     </div>
 
-                    <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-100/80">
-                      During beta, diagnostic snapshots stay enabled so FixMyGame can review bugs, failed repair paths, and crash patterns. Privacy controls can be expanded before the public release.
+                                        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4">
+                      <div className="text-xs font-semibold tracking-widest text-cyan-200/80">
+                        BETA ACCESS
+                      </div>
+
+                      <p className="mt-2 text-sm leading-6 text-white/60">
+                        Enter the approved beta email and Beta ID from your
+                        FixMyGame approval email. This helps connect diagnostic
+                        feedback to the correct tester without publicly showing
+                        personal information.
+                      </p>
+
+                      <div className="mt-4 grid gap-3">
+                        <label className="block">
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/40">
+                            Approved beta email
+                          </div>
+                          <input
+                            value={betaAccessEmailInput}
+                            onChange={(event) =>
+                              setBetaAccessEmailInput(event.target.value)
+                            }
+                            placeholder="tester@email.com"
+                            className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-cyan-300/40"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/40">
+                            Beta ID
+                          </div>
+                          <input
+                            value={betaAccessIdInput}
+                            onChange={(event) =>
+                              setBetaAccessIdInput(event.target.value.toUpperCase())
+                            }
+                            placeholder="FMG-0001"
+                            className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-cyan-300/40"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={verifyBetaAccess}
+                          disabled={verifyingBetaAccess}
+                          className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {verifyingBetaAccess
+                            ? "Verifying..."
+                            : "Verify Beta Access"}
+                        </button>
+
+                        <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
+                          Status:{" "}
+                          <span className="font-semibold text-white">
+                            {isBetaAccessCurrentlyVerified(betaAccess)
+                              ? "Verified on this device"
+                              : "Not verified yet"}
+                          </span>
+                          {betaAccess.verifiedUntil ? (
+                            <div className="mt-1 text-xs text-white/40">
+                              Verified until:{" "}
+                              {new Date(
+                                betaAccess.verifiedUntil,
+                              ).toLocaleDateString()}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {betaAccessMessage ? (
+                          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/70">
+                            {betaAccessMessage}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm leading-6 text-cyan-100/80">
+                        Beta IDs help confirm testers are using the current beta
+                        version, review feedback more accurately, follow up when
+                        a diagnostic needs more context, and keep the beta group
+                        active and organized.
+                      </div>
                     </div>
                   </div>
                 </div>
