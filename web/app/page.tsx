@@ -328,6 +328,36 @@ const FIXMYGAME_FEEDBACK_FORM_URL = "https://docs.google.com/forms/d/1TM1lghcLiq
 const FIXMYGAME_DONATION_URL = "https://ko-fi.com/fixmygame";
 const WHATS_NEW_STORAGE_KEY = `fixmygame:whats-new-seen:${FIXMYGAME_APP_VERSION}`;
 
+const BETA_ACCESS_STORAGE_KEY = "fixmygame:beta-access";
+
+type BetaAccessState = {
+  betaId: string;
+  email: string;
+  deviceId: string;
+  verifiedUntil: string;
+};
+
+const DEFAULT_BETA_ACCESS: BetaAccessState = {
+  betaId: "",
+  email: "",
+  deviceId: "",
+  verifiedUntil: "",
+};
+
+function isBetaAccessCurrentlyVerified(access: BetaAccessState) {
+  if (!access.betaId || !access.email || !access.deviceId || !access.verifiedUntil) {
+    return false;
+  }
+
+  const expiresAt = Date.parse(access.verifiedUntil);
+
+  if (!Number.isFinite(expiresAt)) {
+    return false;
+  }
+
+  return expiresAt > Date.now();
+}
+
 const APP_SETTINGS_STORAGE_KEY = "fixmygame:app-settings";
 
 type AppSettings = {
@@ -3658,7 +3688,15 @@ export default function Page() {
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
   const [isBetaAccess, setIsBetaAccess] = useState(false);
-  const hasUnlimitedAccess = isPro || betaOpen || isBetaAccess;
+  const [betaAccess, setBetaAccess] =
+  useState<BetaAccessState>(DEFAULT_BETA_ACCESS);
+const [betaAccessEmailInput, setBetaAccessEmailInput] = useState("");
+const [betaAccessIdInput, setBetaAccessIdInput] = useState("");
+const [verifyingBetaAccess, setVerifyingBetaAccess] = useState(false);
+const [betaAccessMessage, setBetaAccessMessage] = useState("");
+  const betaAccessVerified = isBetaAccessCurrentlyVerified(betaAccess);
+const shouldShowBetaAccessGate = !isPro && !betaAccessVerified;
+const hasUnlimitedAccess = isPro || betaAccessVerified;
   const appLocked =
     process.env.NEXT_PUBLIC_APP_LOCKED === "1" &&
     typeof window !== "undefined" &&
@@ -3820,6 +3858,19 @@ export default function Page() {
   }, [appSettings]);
 
   useEffect(() => {
+  try {
+    window.localStorage.setItem(
+      BETA_ACCESS_STORAGE_KEY,
+      JSON.stringify(betaAccess),
+    );
+
+    setIsBetaAccess(isBetaAccessCurrentlyVerified(betaAccess));
+  } catch {
+    // ignore storage errors
+  }
+}, [betaAccess]);
+
+  useEffect(() => {
     if (!appSettings.autoDetectGames) {
       setDetectedGameKey(null);
       setAutoDetectNotice("");
@@ -3920,9 +3971,9 @@ export default function Page() {
   }, [selectedGameKey, gpuModel, driverVersion, graphicsApiMode]);
 
   const canRun = useMemo(
-    () => isPro || betaOpen || isBetaAccess || remaining > 0,
-    [isPro, betaOpen, isBetaAccess, remaining],
-  );
+  () => isPro || betaAccessVerified,
+  [isPro, betaAccessVerified],
+);
   const progressState = useMemo(
     () =>
       getProgressState({
@@ -4581,6 +4632,67 @@ function openBetaFormPage() {
   }
 
   window.open(FIXMYGAME_BETA_FORM_URL, "_blank", "noopener,noreferrer");
+}
+
+async function verifyBetaAccess() {
+  const betaId = betaAccessIdInput.trim().toUpperCase();
+  const email = betaAccessEmailInput.trim().toLowerCase();
+  const deviceId = getOrCreateDeviceId();
+
+  if (!betaId || !email) {
+    setBetaAccessMessage("Enter your approved beta email and Beta ID.");
+    return;
+  }
+
+  setVerifyingBetaAccess(true);
+  setBetaAccessMessage("");
+
+  try {
+    const response = await fetchJSON<{
+      ok: boolean;
+      betaId?: string;
+      email?: string;
+      deviceId?: string;
+      verifiedUntil?: string;
+      error?: string;
+    }>(`${API_BASE_URL}/api/beta-verify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-fmg-device-id": deviceId,
+      },
+      body: JSON.stringify({
+        betaId,
+        email,
+        deviceId,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(response.error || "Beta verification failed.");
+    }
+
+    const nextBetaAccess = {
+      betaId: response.betaId || betaId,
+      email: response.email || email,
+      verifiedUntil: response.verifiedUntil || "",
+      deviceId: response.deviceId || deviceId,
+    };
+
+    setBetaAccess(nextBetaAccess);
+    setBetaAccessIdInput(nextBetaAccess.betaId);
+    setBetaAccessEmailInput(nextBetaAccess.email);
+    setIsBetaAccess(true);
+    setBetaAccessMessage("Beta access verified on this device.");
+  } catch (error) {
+    setBetaAccessMessage(
+      error instanceof Error
+        ? error.message
+        : "Beta verification failed. Please try again.",
+    );
+  } finally {
+    setVerifyingBetaAccess(false);
+  }
 }
 
 function openDiscordPage() {
@@ -5277,6 +5389,25 @@ async function runRefinedDiagnosticNow() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      try {
+  const savedBetaAccessRaw = window.localStorage.getItem(BETA_ACCESS_STORAGE_KEY);
+
+  if (savedBetaAccessRaw) {
+    const savedBetaAccess = JSON.parse(savedBetaAccessRaw) as BetaAccessState;
+
+    setBetaAccess({
+      ...DEFAULT_BETA_ACCESS,
+      ...savedBetaAccess,
+    });
+
+    setBetaAccessEmailInput(savedBetaAccess.email || "");
+    setBetaAccessIdInput(savedBetaAccess.betaId || "");
+    setIsBetaAccess(isBetaAccessCurrentlyVerified(savedBetaAccess));
+  }
+} catch {
+  setBetaAccess(DEFAULT_BETA_ACCESS);
+  setIsBetaAccess(false);
+}
       resetLiveSessionState();
 
       setCopied(false);
@@ -5317,6 +5448,7 @@ if (savedAuthorization === "true") {
     }
     let cancelled = false;
 
+    
     async function loadLimit() {
       setLoadingLimit(true);
       try {
