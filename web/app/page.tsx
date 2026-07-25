@@ -3661,6 +3661,7 @@ export default function Page() {
   const [betaShareReturnTarget, setBetaShareReturnTarget] = useState<
   "settings" | null
 >(null);
+const [hasLoadedBetaAccess, setHasLoadedBetaAccess] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"privacy" | "app" | "Updates & Links">("privacy");
   const [appSettings, setAppSettings] =
     useState<AppSettings>(DEFAULT_APP_SETTINGS);
@@ -3857,7 +3858,9 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
     }
   }, [appSettings]);
 
-  useEffect(() => {
+ useEffect(() => {
+  if (!hasLoadedBetaAccess) return;
+
   try {
     window.localStorage.setItem(
       BETA_ACCESS_STORAGE_KEY,
@@ -3868,7 +3871,7 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
   } catch {
     // ignore storage errors
   }
-}, [betaAccess]);
+}, [betaAccess, hasLoadedBetaAccess]);
 
   useEffect(() => {
     if (!appSettings.autoDetectGames) {
@@ -5408,6 +5411,8 @@ async function runRefinedDiagnosticNow() {
   setBetaAccess(DEFAULT_BETA_ACCESS);
   setIsBetaAccess(false);
 }
+
+setHasLoadedBetaAccess(true);
       resetLiveSessionState();
 
       setCopied(false);
@@ -5464,16 +5469,14 @@ if (savedAuthorization === "true") {
         if (cancelled) return;
 
         setIsPro(Boolean(data.isPro));
-        setIsBetaAccess(Boolean(data.isBeta));
-        setLimit(Number.isFinite(data.limit) ? data.limit : 3);
-        setRemaining(Number.isFinite(data.remaining) ? data.remaining : 3);
+setLimit(Number.isFinite(data.limit) ? data.limit : 3);
+setRemaining(Number.isFinite(data.remaining) ? data.remaining : 3);
       } catch {
         if (cancelled) return;
         setIsPro(false);
-        setIsBetaAccess(betaOpen);
-        setLimit(betaOpen ? 999 : 3);
-        setRemaining(betaOpen ? 999 : 3);
-        setDebugProStatus("debug-pro temporarily unavailable");
+setLimit(3);
+setRemaining(3);
+setDebugProStatus("debug-pro temporarily unavailable");
       } finally {
         if (!cancelled) setLoadingLimit(false);
       }
@@ -6721,11 +6724,11 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
 }
 
     if (!canRun) {
-      setErrorMsg(
-        "Daily limit reached. Upgrade to Pro for unlimited diagnostics.",
-      );
-      return;
-    }
+  setErrorMsg(
+    "Your FixMyGame beta access is not verified on this device.",
+  );
+  return;
+}
 
     setRunning(true);
 
@@ -7385,13 +7388,21 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       </main>
     );
   }
-  if (checkingBetaStatus) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center px-6">
-        <div className="text-sm text-white/50">Checking beta access...</div>
-      </main>
-    );
-  }
+
+  if (
+  checkingAuthorization ||
+  loadingLimit ||
+  checkingBetaStatus ||
+  !hasLoadedBetaAccess
+) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-black px-6 text-white">
+      <div className="text-sm text-white/50">
+        Checking FixMyGame access...
+      </div>
+    </main>
+  );
+}
 
   if (!betaOpen) {
     return (
@@ -7413,6 +7424,80 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       </main>
     );
   }
+
+  if (shouldShowBetaAccessGate) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-black px-6 py-12 text-white">
+      <div className="w-full max-w-md rounded-3xl border border-violet-400/20 bg-white/[0.04] p-8 shadow-2xl">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">
+          Private beta access
+        </p>
+
+        <h1 className="mt-3 text-3xl font-extrabold">
+          Verify your FixMyGame access
+        </h1>
+
+        <p className="mt-3 text-sm leading-6 text-white/65">
+          Enter the email address and Beta ID approved for your FixMyGame
+          testing account.
+        </p>
+
+        <div className="mt-6 space-y-4">
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-white/60">
+              Approved email
+            </span>
+
+            <input
+              type="email"
+              value={betaAccessEmailInput}
+              onChange={(event) =>
+                setBetaAccessEmailInput(event.target.value)
+              }
+              placeholder="you@example.com"
+              autoComplete="email"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none placeholder:text-white/25 focus:border-violet-400/50"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-white/60">
+              Beta ID
+            </span>
+
+            <input
+              type="text"
+              value={betaAccessIdInput}
+              onChange={(event) =>
+                setBetaAccessIdInput(event.target.value.toUpperCase())
+              }
+              placeholder="FMG-BETA-0001"
+              autoComplete="off"
+              className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none placeholder:text-white/25 focus:border-violet-400/50"
+            />
+          </label>
+        </div>
+
+        {betaAccessMessage && (
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/75">
+            {betaAccessMessage}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={verifyBetaAccess}
+          disabled={verifyingBetaAccess}
+          className="mt-6 w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {verifyingBetaAccess
+            ? "Verifying access..."
+            : "Verify beta access"}
+        </button>
+      </div>
+    </main>
+  );
+}
 
   return (
     <main className="mx-auto w-full max-w-[900px] px-4 py-12 text-white">
@@ -7481,18 +7566,18 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
           ].join(" ")}
         >
           {isPro
-            ? "Pro Plan"
-            : hasUnlimitedAccess
-              ? "Beta: Unlimited"
-              : "Free Plan"}
+  ? "Pro Access"
+  : betaAccessVerified
+    ? "Verified Beta Access"
+    : "Private Beta"}
         </span>
 
         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
-          {loadingLimit
-            ? "Checking usage..."
-            : isPro || betaOpen || isBetaAccess
-              ? "Unlimited beta access enabled"
-              : `${remaining}/${limit} diagnostics left today`}
+          {isPro
+  ? "Unlimited Pro Access"
+  : betaAccessVerified
+    ? "Beta Access Verified"
+    : "Access Required"}
         </span>
 
         <span
@@ -8020,8 +8105,8 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                 <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 Running Diagnostic...
               </>
-            ) : !canRun && !isPro ? (
-              "Free Limit Reached — Upgrade to Pro"
+            ) : !canRun ? (
+  "Beta Access Required"
             ) : (
               `Run ${effectiveGameTitle} Diagnostic`
             )}
@@ -8035,27 +8120,11 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
 
           <div className="mt-2 flex items-center justify-between text-sm text-white/70">
             <div>
-              {hasUnlimitedAccess ? (
-                betaOpen || isBetaAccess ? (
-                  "Unlimited beta access enabled"
-                ) : (
-                  "Pro: Unlimited"
-                )
-              ) : loadingLimit ? (
-                "Checking daily limit..."
-              ) : (
-                <>
-                  {isBetaAccess ? (
-                    "Unlimited beta access enabled"
-                  ) : (
-                    <>
-                      Free diagnostics left today:{" "}
-                      <span className="font-semibold">{remaining}</span> /{" "}
-                      {limit}
-                    </>
-                  )}
-                </>
-              )}
+             {isPro
+  ? "Pro access verified"
+  : betaAccessVerified
+    ? "Private beta access verified"
+    : "Beta verification required"}
             </div>
 
             {!hasUnlimitedAccess && (
