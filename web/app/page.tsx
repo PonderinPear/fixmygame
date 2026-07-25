@@ -6463,10 +6463,45 @@ if (savedAuthorization === "true") {
     ]);
   }
 
-  function buildSupportSnapshot(params?: {
+    function buildSupportSnapshot(params?: {
     eventType?: string;
     eventDetail?: string;
   }) {
+        const displayedIssue =
+      effectiveDisplayAnalysis?.issue ||
+      displayAnalysis?.issue ||
+      quickSignals?.issue ||
+      "";
+
+    const displayedCause =
+      effectiveDisplayAnalysis?.mostLikelyCause ||
+      displayAnalysis?.mostLikelyCause ||
+      quickSignals?.error ||
+      "";
+
+    const displayedQuickFix =
+      effectiveDisplayAnalysis?.quickFixFirst ||
+      displayAnalysis?.quickFixFirst ||
+      effectiveSmartFixPath?.title ||
+      smartFixPath?.title ||
+      "";
+
+    const displayedCategory =
+      effectiveDisplayAnalysis?.detectedSignals?.likelyCategory ||
+      displayAnalysis?.detectedSignals?.likelyCategory ||
+      displayDetectedSignals?.likelyCategory ||
+      "";
+
+    const displayedConfidence =
+      effectiveDisplayAnalysis?.confidenceLevel ||
+      displayAnalysis?.confidenceLevel ||
+      "";
+
+    const displayedProbabilityBreakdown =
+      effectiveDisplayAnalysis?.probabilityBreakdown ||
+      displayAnalysis?.probabilityBreakdown ||
+      [];
+
     return {
       createdAt: new Date().toISOString(),
       sessionId: supportSessionId,
@@ -6481,6 +6516,24 @@ if (savedAuthorization === "true") {
       },
       eventType: params?.eventType || "manual_snapshot",
       eventDetail: params?.eventDetail || "",
+            diagnosticSummary: {
+        issue: displayedIssue,
+        cause: displayedCause,
+        quickFix: displayedQuickFix,
+        category: displayedCategory,
+        confidence: displayedConfidence,
+        probabilityBreakdown: displayedProbabilityBreakdown,
+        resultTitle: displayedIssue,
+        resultText: result || "",
+        selectedGameKey,
+        selectedGameTitle: gameTitle,
+        detectedGameKey,
+        effectiveGameKey,
+        effectiveGameTitle,
+        currentLogPath,
+        gameInstallDetected,
+        crashLogFingerprint: simpleTextFingerprint(crashLog),
+      },
       consent: {
         supportTelemetryEnabled,
         authorizationAccepted: hasAcceptedAuthorization,

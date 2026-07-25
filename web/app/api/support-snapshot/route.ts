@@ -90,9 +90,55 @@ export async function POST(req: Request) {
       eventType: body?.eventType || "snapshot",
       eventDetail: body?.eventDetail || "",
 
-      issue: body?.diagnostic?.analysis?.issue || "",
-      cause: body?.diagnostic?.analysis?.mostLikelyCause || "",
-      quickFix: body?.diagnostic?.analysis?.quickFixFirst || "",
+            issue:
+        body?.diagnosticSummary?.issue ||
+        body?.diagnostic?.analysis?.issue ||
+        body?.diagnostic?.result?.resultTitle ||
+        body?.diagnostic?.quickSignals?.issue ||
+        "",
+
+      cause:
+        body?.diagnosticSummary?.cause ||
+        body?.diagnostic?.analysis?.mostLikelyCause ||
+        body?.diagnostic?.result?.resultText ||
+        body?.diagnostic?.quickSignals?.error ||
+        "",
+
+      quickFix:
+        body?.diagnosticSummary?.quickFix ||
+        body?.diagnostic?.analysis?.quickFixFirst ||
+        "",
+
+      category:
+        body?.diagnosticSummary?.category ||
+        body?.diagnostic?.analysis?.likelyCategory ||
+        body?.diagnostic?.quickSignals?.likelyCategory ||
+        "",
+
+      confidence:
+        body?.diagnosticSummary?.confidence ||
+        body?.diagnostic?.analysis?.confidence ||
+        "",
+
+      probabilityBreakdown:
+        body?.diagnosticSummary?.probabilityBreakdown ||
+        body?.diagnostic?.analysis?.probabilityBreakdown ||
+        [],
+
+      resultTitle:
+        body?.diagnosticSummary?.resultTitle ||
+        body?.diagnostic?.result?.resultTitle ||
+        "",
+
+      resultText:
+        body?.diagnosticSummary?.resultText ||
+        body?.diagnostic?.result?.resultText ||
+        "",
+
+      crashLogFingerprint:
+        body?.diagnosticSummary?.crashLogFingerprint ||
+        body?.diagnostic?.crashLogFingerprint ||
+        "",
 
       logSnippet: String(body?.diagnostic?.crashLog || "").slice(0, 1200),
 
