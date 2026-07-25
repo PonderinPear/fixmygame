@@ -60,13 +60,28 @@ export async function POST(req: Request) {
     body?.system?.buildChannel ||
     "unknown",
 
-  vid:
+   vid:
   req.headers.get("x-fmg-device-id") ||
   body?.vid ||
   body?.deviceId ||
   body?.system?.vid ||
   body?.system?.deviceId ||
   "unknown",
+
+      betaId:
+        body?.betaAccess?.betaId ||
+        body?.betaId ||
+        "unknown",
+
+      betaEmail:
+        body?.betaAccess?.email ||
+        body?.betaEmail ||
+        "",
+
+      betaVerifiedUntil:
+        body?.betaAccess?.verifiedUntil ||
+        "",
+
       sessionId: body?.sessionId || "unknown_session",
 
       game: body?.game?.key || "unknown",
