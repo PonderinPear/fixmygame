@@ -3687,7 +3687,8 @@ export default function Page() {
   const [limit, setLimit] = useState(3);
   const [remaining, setRemaining] = useState(3);
   const [isBetaAccess, setIsBetaAccess] = useState(false);
-  const hasUnlimitedAccess = isPro || betaOpen || isBetaAccess;
+    const betaAccessVerified = isBetaAccessCurrentlyVerified(betaAccess);
+  const hasUnlimitedAccess = isPro || betaAccessVerified || isBetaAccess;
   const appLocked =
     process.env.NEXT_PUBLIC_APP_LOCKED === "1" &&
     typeof window !== "undefined" &&
@@ -3872,8 +3873,9 @@ export default function Page() {
     }
   }, []);
 
-  useEffect(() => {
+    useEffect(() => {
     localStorage.setItem(BETA_ACCESS_STORAGE_KEY, JSON.stringify(betaAccess));
+    setIsBetaAccess(isBetaAccessCurrentlyVerified(betaAccess));
   }, [betaAccess]);
 
   useEffect(() => {
@@ -3976,9 +3978,9 @@ export default function Page() {
     }
   }, [selectedGameKey, gpuModel, driverVersion, graphicsApiMode]);
 
-  const canRun = useMemo(
-    () => isPro || betaOpen || isBetaAccess || remaining > 0,
-    [isPro, betaOpen, isBetaAccess, remaining],
+    const canRun = useMemo(
+    () => isPro || betaAccessVerified || isBetaAccess || remaining > 0,
+    [isPro, betaAccessVerified, isBetaAccess, remaining],
   );
   const progressState = useMemo(
     () =>
@@ -6600,9 +6602,10 @@ if (savedAuthorization === "true") {
         deviceId: response.deviceId || deviceId,
       };
 
-      setBetaAccess(nextBetaAccess);
+            setBetaAccess(nextBetaAccess);
       setBetaAccessIdInput(nextBetaAccess.betaId);
       setBetaAccessEmailInput(nextBetaAccess.email);
+      setIsBetaAccess(true);
       setBetaAccessMessage("Beta access verified on this device.");
     } catch (error) {
       const message =
@@ -6667,8 +6670,17 @@ if (savedAuthorization === "true") {
     const logToUse = overrideCrashLog ?? crashLog;
     const autoScroll = options?.autoScroll ?? true;
 
-    if (typeof logToUse !== "string" || !logToUse.trim()) {
+        if (typeof logToUse !== "string" || !logToUse.trim()) {
       setErrorMsg("Paste a crash log / error first.");
+      return;
+    }
+
+    if (!isPro && !isBetaAccessCurrentlyVerified(betaAccess)) {
+      setSettingsTab("privacy");
+      setShowSettingsModal(true);
+      setErrorMsg(
+        "Please verify your Beta Access in Settings before running diagnostics.",
+      );
       return;
     }
 
