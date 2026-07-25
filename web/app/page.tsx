@@ -6619,6 +6619,62 @@ if (savedAuthorization === "true") {
     }
   }
 
+  async function removeBetaAccessFromDevice() {
+  const savedBetaId = betaAccess.betaId || betaAccessIdInput.trim().toUpperCase();
+  const savedEmail = betaAccess.email || betaAccessEmailInput.trim().toLowerCase();
+  const deviceId = getOrCreateDeviceId();
+
+  setVerifyingBetaAccess(true);
+  setBetaAccessMessage("");
+
+  try {
+    if (savedBetaId && savedEmail) {
+      await fetchJSON<{
+        ok: boolean;
+        released?: boolean;
+        error?: string;
+      }>(`${API_BASE_URL}/api/beta-release`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-fmg-device-id": deviceId,
+        },
+        body: JSON.stringify({
+          betaId: savedBetaId,
+          email: savedEmail,
+          deviceId,
+        }),
+      });
+    }
+
+    const emptyAccess = { ...DEFAULT_BETA_ACCESS };
+
+    setBetaAccess(emptyAccess);
+    setBetaAccessIdInput("");
+    setBetaAccessEmailInput("");
+    setIsBetaAccess(false);
+    localStorage.removeItem(BETA_ACCESS_STORAGE_KEY);
+
+    setBetaAccessMessage("Beta access was removed from this device.");
+  } catch (error) {
+    const emptyAccess = { ...DEFAULT_BETA_ACCESS };
+
+    setBetaAccess(emptyAccess);
+    setBetaAccessIdInput("");
+    setBetaAccessEmailInput("");
+    setIsBetaAccess(false);
+    localStorage.removeItem(BETA_ACCESS_STORAGE_KEY);
+
+    setBetaAccessMessage(
+      error instanceof Error
+        ? `${error.message} Local beta access was still removed from this device.`
+        : "Local beta access was removed from this device.",
+    );
+  } finally {
+    setVerifyingBetaAccess(false);
+  }
+}
+
   async function sendSupportSnapshot(eventType: string, eventDetail?: string) {
     if (!supportTelemetryEnabled) return;
 
@@ -7414,8 +7470,86 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     );
   }
 
+    const shouldShowBetaAccessGate = !isPro && !betaAccessVerified;
+
   return (
     <main className="mx-auto w-full max-w-[900px] px-4 py-12 text-white">
+      {shouldShowBetaAccessGate ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 px-4 backdrop-blur-md">
+          <div className="w-full max-w-lg rounded-3xl border border-cyan-400/20 bg-[#071224] p-6 shadow-2xl">
+            <div className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-200/80">
+              Private Beta
+            </div>
+
+            <h2 className="mt-3 text-3xl font-extrabold text-white">
+              Private Beta Access
+            </h2>
+
+            <p className="mt-3 text-sm leading-6 text-white/65">
+              FixMyGame is currently in private beta. Enter the approved email
+              and Beta ID from your approval email to continue.
+            </p>
+
+            <div className="mt-5 grid gap-3">
+              <label className="block">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/40">
+                  Approved beta email
+                </div>
+                <input
+                  value={betaAccessEmailInput}
+                  onChange={(event) =>
+                    setBetaAccessEmailInput(event.target.value)
+                  }
+                  placeholder="tester@email.com"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-cyan-300/40"
+                />
+              </label>
+
+              <label className="block">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-widest text-white/40">
+                  Beta ID
+                </div>
+                <input
+                  value={betaAccessIdInput}
+                  onChange={(event) =>
+                    setBetaAccessIdInput(event.target.value.toUpperCase())
+                  }
+                  placeholder="FMG-0001"
+                  className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-cyan-300/40"
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={verifyBetaAccess}
+                disabled={verifyingBetaAccess}
+                className="rounded-xl bg-cyan-400 px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {verifyingBetaAccess ? "Checking access..." : "Unlock Beta Access"}
+              </button>
+
+              <button
+                type="button"
+                onClick={openBetaFormPage}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/75 transition hover:bg-white/10 hover:text-white"
+              >
+                Request Beta Access
+              </button>
+
+              {betaAccessMessage ? (
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white/70">
+                  {betaAccessMessage}
+                </div>
+              ) : null}
+            </div>
+
+            <p className="mt-4 text-xs leading-5 text-white/40">
+              This links beta feedback to the correct tester and helps keep the
+              beta group private.
+            </p>
+          </div>
+        </div>
+      ) : null}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-4xl font-extrabold tracking-tight">
@@ -7472,28 +7606,30 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
         <span className="rounded-full border border-fuchsia-400/20 bg-fuchsia-400/10 px-3 py-1 text-xs font-medium text-fuchsia-200">
           Active Game: {gameTitle}
         </span>
-        <span
-          className={[
-            "rounded-full px-3 py-1 text-xs font-medium",
-            isPro
-              ? "border border-amber-400/20 bg-amber-400/10 text-amber-200"
-              : "border border-white/10 bg-white/5 text-white/80",
-          ].join(" ")}
-        >
-          {isPro
-            ? "Pro Plan"
-            : hasUnlimitedAccess
-              ? "Beta: Unlimited"
-              : "Free Plan"}
-        </span>
+<span
+  className={[
+    "rounded-full px-3 py-1 text-xs font-medium",
+    isPro
+      ? "border border-amber-400/20 bg-amber-400/10 text-amber-200"
+      : betaAccessVerified
+        ? "border border-emerald-400/20 bg-emerald-400/10 text-emerald-200"
+        : "border border-red-400/20 bg-red-400/10 text-red-200",
+  ].join(" ")}
+>
+  {isPro
+    ? "Pro Plan"
+    : betaAccessVerified
+      ? "Approved Tester"
+      : "Beta Login Needed"}
+</span>
 
-        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
-          {loadingLimit
-            ? "Checking usage..."
-            : isPro || betaOpen || isBetaAccess
-              ? "Unlimited beta access enabled"
-              : `${remaining}/${limit} diagnostics left today`}
-        </span>
+<span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
+  {loadingLimit
+    ? "Checking access..."
+    : betaAccessVerified
+      ? "Private Beta"
+      : "Verification Required"}
+</span>
 
         <span
           className={[
@@ -9837,6 +9973,15 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                             ? "Verifying..."
                             : "Verify Beta Access"}
                         </button>
+
+                        <button
+  type="button"
+  onClick={removeBetaAccessFromDevice}
+  disabled={verifyingBetaAccess}
+  className="rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+>
+  Remove Beta Access From This Device
+</button>
 
                         <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white/60">
                           Status:{" "}
