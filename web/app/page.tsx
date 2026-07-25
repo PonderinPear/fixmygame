@@ -9724,125 +9724,50 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       </h2>
 
       <p className="mt-3 text-sm text-white/65">
-        This update focuses on making FixMyGame safer, clearer, and easier to
-        test during beta.
-      </p>
+  This update improves private beta access, diagnostic stability, and support
+  feedback during beta testing.
+</p>
 
-      <div className="mt-5 space-y-3">
- <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    New Updates & Links settings tab
+<div className="mt-5 space-y-3">
+  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="text-sm font-semibold text-white">
+      Private beta login added
+    </div>
+    <p className="mt-1 text-sm text-white/60">
+      Approved testers now unlock FixMyGame with their approved beta email and
+      Beta ID before running diagnostics.
+    </p>
   </div>
-  <p className="mt-1 text-sm text-white/60">
-    Added a dedicated Updates & Links tab in Settings so update notes, beta
-    links, support options, and invite tools are easier to find.
-  </p>
-</div>
 
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Quick Links added to Settings
+  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="text-sm font-semibold text-white">
+      Better beta access protection
+    </div>
+    <p className="mt-1 text-sm text-white/60">
+      Beta access is now tied to the approved tester and device to help keep
+      the private beta limited to approved users.
+    </p>
   </div>
-  <p className="mt-1 text-sm text-white/60">
-    Added quick access to the FixMyGame website, Discord beta server, beta
-    invite sharing, issue reporting, beta request form, and feedback form.
-  </p>
-</div>
 
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Better beta invite flow
+  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="text-sm font-semibold text-white">
+      Diagnostic stability improvements
+    </div>
+    <p className="mt-1 text-sm text-white/60">
+      FixMyGame now handles slow backend checks more safely, so diagnostics are
+      less likely to get stuck on “Running Diagnostic...”
+    </p>
   </div>
-  <p className="mt-1 text-sm text-white/60">
-    The beta invite modal can now be opened from Settings, includes a return
-    path back to Updates & Links, and supports copying or emailing the beta
-    invite text.
-  </p>
-</div>
 
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Optional support moved
+  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+    <div className="text-sm font-semibold text-white">
+      Improved beta feedback details
+    </div>
+    <p className="mt-1 text-sm text-white/60">
+      Diagnostic feedback now includes clearer tester and result details, making
+      beta issues easier to review and improve.
+    </p>
   </div>
-  <p className="mt-1 text-sm text-white/60">
-    Optional FixMyGame support was moved out of the App tab and into Updates &
-    Links so app behavior settings stay separate from links and support.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    New FixMyGame Guides
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Added beginner-friendly guides for reading crash logs, missing
-    dependencies, mod conflicts, fresh logs vs old logs, Safe Repair Preview,
-    and verifying or reinstalling game files.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    New game-specific help pages
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Added targeted help pages for common Minecraft, Stardew Valley, and Lethal
-    Company issues, including Java version errors, missing Fabric API, JEI
-    dependency problems, empty SMAPI folders, and BepInEx log help.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Required beta diagnostic snapshots
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Beta builds now require anonymous diagnostic snapshots so bugs, failed
-    repair paths, crash patterns, and confusing results can be reviewed during
-    testing.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Fresh beta access checks
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    FixMyGame now checks beta access again when running diagnostics, so the app
-    responds correctly if beta access changes.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Better diagnostic feedback
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Diagnostic results can now be marked helpful or needs work, giving beta
-    testing clearer feedback on what is working and what needs improvement.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Cleaner support and reporting
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Report issue emails now include helpful app details, version info, session
-    details, diagnostic context, and a clearer note asking users to leave the
-    technical details in place.
-  </p>
-</div>
-
-<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-  <div className="text-sm font-semibold text-white">
-    Behind-the-scenes support updates
-  </div>
-  <p className="mt-1 text-sm text-white/60">
-    Added support for clearer emergency records, support snapshots, sitemap
-    updates, guide discovery improvements, and safer beta testing workflows.
-  </p>
-</div>
 </div>
 
       <div className="mt-6 flex justify-end">
