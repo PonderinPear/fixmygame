@@ -35,6 +35,7 @@ type Snapshot = {
   limits?: Record<string, unknown>;
   raw?: unknown;
 };
+const OWNER_BETA_IDS = ["FMG-0004"];
 
 export default function AdminPage() {
   const [secret, setSecret] = useState("");
@@ -44,9 +45,10 @@ export default function AdminPage() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [attentionOnly, setAttentionOnly] = useState(false);
+  const [showAllTopIssues, setShowAllTopIssues] = useState(false);
 
   async function loadSnapshots() {
     setError("");
@@ -77,12 +79,11 @@ export default function AdminPage() {
   }
 
   function getSnapshotStyle(snap: Snapshot) {
-  const source =
-    snap.vid === "08a45473-d92c-4024-8532-955f777061ba"
-      ? "owner"
-      : snap.vid
-      ? "beta"
-      : "unknown";
+    const isOwner =
+    OWNER_BETA_IDS.includes(String(snap.betaId || "").toUpperCase()) ||
+    snap.vid === "08a45473-d92c-4024-8532-955f777061ba";
+
+  const source = isOwner ? "owner" : snap.vid ? "beta" : "unknown";
 
   if (source === "owner") {
     return "relative overflow-hidden rounded-2xl border border-fuchsia-400/30 bg-fuchsia-500/[0.07] p-4 shadow-[0_0_24px_rgba(217,70,239,0.10)] before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:bg-fuchsia-400";
@@ -101,10 +102,16 @@ export default function AdminPage() {
   }
 
   function getTesterLabel(snap: Snapshot) {
-    if (snap.betaId && snap.betaId !== "unknown") {
-      return snap.betaEmail
+        if (snap.betaId && snap.betaId !== "unknown") {
+      const isOwner = OWNER_BETA_IDS.includes(
+        String(snap.betaId || "").toUpperCase(),
+      );
+
+      const label = snap.betaEmail
         ? `${snap.betaId} • ${snap.betaEmail}`
         : snap.betaId;
+
+      return isOwner ? `Owner test • ${label}` : label;
     }
 
     if (snap.vid === "08a45473-d92c-4024-8532-955f777061ba") {
@@ -174,6 +181,8 @@ export default function AdminPage() {
     return matchesSearch && matchesAttention;
   });
 
+    const visibleTopIssues = showAllTopIssues ? topIssues : topIssues.slice(0, 5);
+
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <div className="mx-auto max-w-6xl">
@@ -215,8 +224,11 @@ export default function AdminPage() {
 
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <div className="text-sm text-white/60">Total Snapshots</div>
-            <div className="mt-2 text-3xl font-bold">{total}</div>
+            <div className="text-sm text-white/60">Total Snapshots Stored</div>
+<div className="mt-2 text-3xl font-bold">{total}</div>
+<div className="mt-1 text-xs text-white/40">
+  Showing newest {snapshots.length}
+</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
@@ -236,16 +248,30 @@ export default function AdminPage() {
 
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
-            <h2 className="font-bold">Top Issues</h2>
-            <div className="mt-4 grid gap-2">
-              {topIssues.map((item) => (
-                <div key={item.issue} className="rounded-xl bg-black/30 p-3">
-                  <div className="font-medium">{item.issue}</div>
-                  <div className="text-sm text-white/50">{item.count} snapshot(s)</div>
-                </div>
-              ))}
-            </div>
-          </section>
+  <h2 className="font-bold">Top Issues</h2>
+
+  <div className="mt-4 grid gap-2">
+    {visibleTopIssues.map((item) => (
+      <div key={item.issue} className="rounded-xl bg-black/30 p-3">
+        <div className="font-medium">{item.issue}</div>
+        <div className="text-sm text-white/50">
+          {item.count} snapshot(s)
+        </div>
+      </div>
+    ))}
+  </div>
+
+  {topIssues.length > 5 ? (
+    <button
+      onClick={() => setShowAllTopIssues((value) => !value)}
+      className="mt-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75 hover:bg-white/10"
+    >
+      {showAllTopIssues
+        ? "Show fewer issues"
+        : `Show all ${topIssues.length} issues`}
+    </button>
+  ) : null}
+</section>
 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-5">
             <h2 className="font-bold">Top Games</h2>

@@ -9723,9 +9723,9 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
         What’s new in this update
       </h2>
 
-      <p className="mt-3 text-sm text-white/65">
-  This update improves private beta access, diagnostic stability, and support
-  feedback during beta testing.
+     <p className="mt-3 text-sm text-white/65">
+  This update improves private beta access and fixes a few issues reported
+  during beta testing.
 </p>
 
 <div className="mt-5 space-y-3">
@@ -9744,30 +9744,24 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       Better beta access protection
     </div>
     <p className="mt-1 text-sm text-white/60">
-      Beta access is now tied to the approved tester and device to help keep
-      the private beta limited to approved users.
+      Beta access is now connected to the approved tester and device to help
+      keep the private beta limited to approved users.
     </p>
   </div>
 
   <div className="rounded-xl border border-white/10 bg-white/5 p-4">
     <div className="text-sm font-semibold text-white">
-      Diagnostic stability improvements
+      Bug fixes and stability improvements
     </div>
     <p className="mt-1 text-sm text-white/60">
-      FixMyGame now handles slow backend checks more safely, so diagnostics are
-      less likely to get stuck on “Running Diagnostic...”
+      Fixed issues that could cause diagnostics to hang or feel stuck, plus
+      made smaller beta testing improvements behind the scenes.
     </p>
   </div>
-
-  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-    <div className="text-sm font-semibold text-white">
-      Improved beta feedback details
-    </div>
-    <p className="mt-1 text-sm text-white/60">
-      Diagnostic feedback now includes clearer tester and result details, making
-      beta issues easier to review and improve.
-    </p>
-  </div>
+  <p className="mt-4 text-xs text-white/45">
+  More small fixes may be released over the next few days if anything new comes
+  up during beta testing.
+</p>
 </div>
 
       <div className="mt-6 flex justify-end">
