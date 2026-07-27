@@ -7494,6 +7494,16 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
             ? "Verifying access..."
             : "Verify beta access"}
         </button>
+        <p className="mt-4 text-center text-sm text-white/55">
+  Don&apos;t have approved access?{" "}
+  <button
+    type="button"
+    onClick={openBetaFormPage}
+    className="font-medium text-violet-300 underline decoration-violet-300/40 underline-offset-4 transition hover:text-violet-200"
+  >
+    Request beta access
+  </button>
+</p>
       </div>
     </main>
   );
