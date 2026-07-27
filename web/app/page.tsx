@@ -319,7 +319,7 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.9";
+const FIXMYGAME_APP_VERSION = "1.0.9-beta.1";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 const FIXMYGAME_BETA_INVITE_URL = "https://fixmygame-site.vercel.app/";
 const FIXMYGAME_BETA_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScGcdRTg2kv4-_NKk1x2MkjSd1QsVItjKxi0ht--HNf1GLngQ/viewform"
@@ -4805,7 +4805,7 @@ function submitDiagnosticFeedback(rating: "helpful" | "needs_work") {
   recordEmergencyEvent({
     type: "feedback_submitted",
     sessionId: supportSessionId,
-    appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+    appVersion: FIXMYGAME_APP_VERSION,
     routeVersion: "v2-diagnostic-mapping",
     game: effectiveGameTitle,
     resultCategory:
@@ -5825,7 +5825,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "safe_repair_completed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -5862,7 +5862,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "safe_repair_failed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message,
@@ -5884,7 +5884,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
     recordEmergencyEvent({
       type: "undo_clicked",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
@@ -5952,7 +5952,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "undo_clicked",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -6030,7 +6030,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "app_error",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message,
@@ -6735,7 +6735,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "diagnostic_started",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       metadata: {
@@ -6806,7 +6806,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       recordEmergencyEvent({
         type: "diagnostic_completed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -6897,7 +6897,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       recordEmergencyEvent({
         type: "app_error",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message: msg,
@@ -7471,7 +7471,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               onChange={(event) =>
                 setBetaAccessIdInput(event.target.value.toUpperCase())
               }
-              placeholder="FMG-BETA-0001"
+              placeholder="FMG-0000"
               autoComplete="off"
               className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none placeholder:text-white/25 focus:border-violet-400/50"
             />
@@ -8264,7 +8264,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                     recordEmergencyEvent({
                       type: "safe_repair_previewed",
                       sessionId: supportSessionId,
-                      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                      appVersion: FIXMYGAME_APP_VERSION,
                       routeVersion: "v2-diagnostic-mapping",
                       game: effectiveGameTitle,
                       resultCategory:
@@ -8464,7 +8464,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                       recordEmergencyEvent({
                         type: "safe_repair_previewed",
                         sessionId: supportSessionId,
-                        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                        appVersion: FIXMYGAME_APP_VERSION,
                         routeVersion: "v2-diagnostic-mapping",
                         game: effectiveGameTitle,
                         resultCategory:
@@ -8794,7 +8794,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                       recordEmergencyEvent({
                         type: "safe_repair_previewed",
                         sessionId: supportSessionId,
-                        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                        appVersion: FIXMYGAME_APP_VERSION,
                         routeVersion: "v2-diagnostic-mapping",
                         game: effectiveGameTitle,
                         resultCategory:
@@ -9401,7 +9401,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "fixed_it_clicked",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
@@ -9441,7 +9441,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                         recordEmergencyEvent({
                           type: "still_crashing_clicked",
                           sessionId: supportSessionId,
-                          appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                          appVersion: FIXMYGAME_APP_VERSION,
                           routeVersion: "v2-diagnostic-mapping",
                           game: effectiveGameTitle,
                           metadata: {
@@ -10605,7 +10605,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               recordEmergencyEvent({
                 type: "fixed_it_clicked",
                 sessionId: supportSessionId,
-                appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                appVersion: FIXMYGAME_APP_VERSION,
                 routeVersion: "v2-diagnostic-mapping",
                 game: effectiveGameTitle,
                 resultCategory:
@@ -10653,7 +10653,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               recordEmergencyEvent({
                 type: "still_crashing_after_fix",
                 sessionId: supportSessionId,
-                appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                appVersion: FIXMYGAME_APP_VERSION,
                 routeVersion: "v2-diagnostic-mapping",
                 game: effectiveGameTitle,
                 metadata: {
@@ -11051,7 +11051,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "feedback_submitted",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:

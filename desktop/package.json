@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "version": "1.0.9",
+  "version": "1.0.9-beta.1",
   "description": "FixMyGame desktop app",
   "main": "main.js",
   "author": "",
