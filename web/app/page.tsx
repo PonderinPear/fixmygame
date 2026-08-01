@@ -7632,14 +7632,6 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     : "Private Beta"}
         </span>
 
-        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
-          {isPro
-  ? "Unlimited Pro Access"
-  : betaAccessVerified
-    ? "Beta Access Verified"
-    : "Access Required"}
-        </span>
-
         <span
           className={[
             "rounded-full px-3 py-1 text-xs font-medium",
