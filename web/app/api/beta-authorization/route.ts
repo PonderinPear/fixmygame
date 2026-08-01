@@ -5,8 +5,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const VERIFY_DAYS = 7;
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -31,15 +29,9 @@ function normalizeBetaId(value: unknown) {
   return String(value || "").trim().toUpperCase();
 }
 
-function isValidBetaId(betaId: string) {
-  return /^FMG-\d{4}$/.test(betaId);
-}
-
 function getApprovedTesters(): ApprovedTester[] {
-  const raw = process.env.BETA_TESTERS_JSON || "[]";
-
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(process.env.BETA_TESTERS_JSON || "[]");
 
     if (!Array.isArray(parsed)) {
       return [];
@@ -69,37 +61,23 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const email = normalizeEmail(body?.email);
     const betaId = normalizeBetaId(body?.betaId);
+    const email = normalizeEmail(body?.email);
     const deviceId =
       req.headers.get("x-fmg-device-id") ||
       String(body?.deviceId || "").trim();
 
-    if (!email || !betaId || !deviceId) {
+    if (!betaId || !email || !deviceId) {
       return NextResponse.json(
         {
           ok: false,
-          code: "missing_beta_access_info",
-          error: "Enter your approved beta email and Beta ID.",
+          error: "Beta access must be verified before approval can be saved.",
         },
         { status: 400, headers: corsHeaders },
       );
     }
 
-    if (!isValidBetaId(betaId)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "invalid_beta_id_format",
-          error: "Beta ID should look like FMG-0001.",
-        },
-        { status: 400, headers: corsHeaders },
-      );
-    }
-
-    const approvedTesters = getApprovedTesters();
-
-    const approvedTester = approvedTesters.find(
+    const approvedTester = getApprovedTesters().find(
       (tester) =>
         tester.betaId === betaId &&
         tester.email === email &&
@@ -110,79 +88,51 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           ok: false,
-          code: "beta_access_not_approved",
-          error:
-            "This Beta ID and email combination is not approved for FixMyGame beta access.",
+          error: "This beta account is not approved.",
         },
         { status: 403, headers: corsHeaders },
       );
     }
 
-const redis = getRedisClient();
+    const redis = getRedisClient();
+    const lockedDeviceId = await redis.get<string>(
+      `beta:device-lock:${betaId}`,
+    );
 
-const storedAuthorization = await redis.get<unknown>(
-  `beta:authorization:${betaId}`,
-);
-
-const authorizationAccepted =
-  storedAuthorization === true ||
-  storedAuthorization === "true" ||
-  (typeof storedAuthorization === "object" &&
-    storedAuthorization !== null &&
-    "accepted" in storedAuthorization &&
-    (storedAuthorization as { accepted?: unknown }).accepted === true);
-
-const deviceLockKey = `beta:device-lock:${betaId}`;
-    const existingDeviceId = await redis.get<string>(deviceLockKey);
-
-    if (existingDeviceId && existingDeviceId !== deviceId) {
+    if (!lockedDeviceId || lockedDeviceId !== deviceId) {
       return NextResponse.json(
         {
           ok: false,
-          code: "beta_id_locked_to_other_device",
-          error:
-            "This Beta ID is already active on another device. If this is your new device, contact FixMyGame support to reset beta access.",
+          error: "Verify beta access on this device before continuing.",
         },
         { status: 403, headers: corsHeaders },
       );
     }
 
-    const now = new Date();
-    const verifiedUntil = new Date(
-      now.getTime() + VERIFY_DAYS * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const acceptedAt = new Date().toISOString();
 
-    await redis.set(deviceLockKey, deviceId);
-
-    await redis.set(`beta:last-seen:${betaId}`, {
+    await redis.set(`beta:authorization:${betaId}`, {
       betaId,
       email,
-      deviceId,
-      lastSeenAt: now.toISOString(),
-      verifiedUntil,
+      accepted: true,
+      acceptedAt,
     });
 
     return NextResponse.json(
       {
         ok: true,
-        betaId,
-        email,
-        deviceId,
-        verifiedUntil,
-        deviceLocked: true,
-        authorizationAccepted,
+        authorizationAccepted: true,
+        acceptedAt,
       },
       { headers: corsHeaders },
     );
   } catch (error) {
-    console.error("BETA VERIFY ERROR:", error);
+    console.error("BETA AUTHORIZATION ERROR:", error);
 
     return NextResponse.json(
       {
         ok: false,
-        code: "beta_verify_failed",
-        error:
-          "Beta verification is temporarily unavailable. Please try again in a few minutes.",
+        error: "Unable to save beta approval. Please try again.",
       },
       { status: 503, headers: corsHeaders },
     );

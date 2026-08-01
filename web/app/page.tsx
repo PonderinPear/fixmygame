@@ -335,6 +335,7 @@ type BetaAccessState = {
   email: string;
   deviceId: string;
   verifiedUntil: string;
+  authorizationAccepted: boolean;
 };
 
 const DEFAULT_BETA_ACCESS: BetaAccessState = {
@@ -342,6 +343,7 @@ const DEFAULT_BETA_ACCESS: BetaAccessState = {
   email: "",
   deviceId: "",
   verifiedUntil: "",
+  authorizationAccepted: false,
 };
 
 function isBetaAccessCurrentlyVerified(access: BetaAccessState) {
@@ -4657,6 +4659,7 @@ async function verifyBetaAccess() {
       email?: string;
       deviceId?: string;
       verifiedUntil?: string;
+      authorizationAccepted?: boolean;
       error?: string;
     }>(`${API_BASE_URL}/api/beta-verify`, {
       method: "POST",
@@ -4680,12 +4683,25 @@ async function verifyBetaAccess() {
       email: response.email || email,
       verifiedUntil: response.verifiedUntil || "",
       deviceId: response.deviceId || deviceId,
+      authorizationAccepted: response.authorizationAccepted === true,
     };
 
     setBetaAccess(nextBetaAccess);
     setBetaAccessIdInput(nextBetaAccess.betaId);
     setBetaAccessEmailInput(nextBetaAccess.email);
     setIsBetaAccess(true);
+    setHasAcceptedAuthorization(nextBetaAccess.authorizationAccepted);
+
+if (nextBetaAccess.authorizationAccepted) {
+  setSupportTelemetryEnabled(true);
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
+    window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
+  }
+} else if (typeof window !== "undefined") {
+  window.localStorage.removeItem(APP_AUTH_STORAGE_KEY);
+}
     setBetaAccessMessage("Beta access verified on this device.");
   } catch (error) {
     setBetaAccessMessage(
@@ -4918,19 +4934,53 @@ async function runRefinedDiagnosticNow() {
     resetResultFollowupMessage();
   }
 
-  function acceptAuthorizationGate() {
-    if (!supportTelemetryEnabled) {
-      setShowError(true);
-      return;
+async function acceptAuthorizationGate() {
+  if (!supportTelemetryEnabled) {
+    setShowError(true);
+    return;
+  }
+
+  try {
+    const response = await fetchJSON<{
+      ok: boolean;
+      authorizationAccepted?: boolean;
+      acceptedAt?: string;
+      error?: string;
+    }>(`${API_BASE_URL}/api/beta-authorization`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-fmg-device-id": betaAccess.deviceId,
+      },
+      body: JSON.stringify({
+        betaId: betaAccess.betaId,
+        email: betaAccess.email,
+        deviceId: betaAccess.deviceId,
+      }),
+    });
+
+    if (!response.ok || !response.authorizationAccepted) {
+      throw new Error(response.error || "Unable to save beta approval.");
     }
+
+    const acceptedAccess = {
+      ...betaAccess,
+      authorizationAccepted: true,
+    };
+
+    setBetaAccess(acceptedAccess);
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
       window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
     }
 
+    setShowError(false);
     setHasAcceptedAuthorization(true);
+  } catch {
+    setShowError(true);
   }
+}
 
   async function fetchBetaStatus() {
     try {
