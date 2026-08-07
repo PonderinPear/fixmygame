@@ -3069,11 +3069,22 @@ function detectGameFromLog(log: string): string | null {
   }
 
   if (
+  lower.includes("starfield") ||
+  lower.includes("starfield.exe") ||
+  lower.includes("sfse_") ||
+  lower.includes("starfield script extender") ||
+  lower.includes("bakaachievementenabler") ||
+  lower.includes("starfieldenginefixes") ||
+  lower.includes("trainwreck.dll")
+) {
+  return "starfield";
+}
+
+  if (
     lower.includes("baldur's gate 3") ||
     lower.includes("baldurs gate 3") ||
     lower.includes("bg3") ||
     lower.includes("larian") ||
-    lower.includes("script extender") ||
     lower.includes("gustav") ||
     lower.includes("story compilation error")
   ) {
@@ -7685,12 +7696,27 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
             value={gameTitle}
             options={SORTED_GAME_PRESETS.map((g) => g.label)}
             onChange={(label) => {
-              const match = SORTED_GAME_PRESETS.find((g) => g.label === label);
-              if (match) {
-                setSelectedGameKey(match.key);
-                setHasAppliedAutoGameDetect(true);
-              }
-            }}
+  const match = SORTED_GAME_PRESETS.find((g) => g.label === label);
+
+  if (match) {
+    setSelectedGameKey(match.key);
+
+    // Manual selection overrides any prior auto-detected game.
+    setDetectedGameKey(null);
+    setAutoDetectNotice("");
+    setHasAppliedAutoGameDetect(true);
+
+    // Recalculate the visible log signals using the user's chosen game.
+    if (crashLog.trim()) {
+      setQuickSignals(quickDetect(crashLog, match.key));
+      setLogHighlights(extractLogHighlights(crashLog, match.key));
+      setLiveMods(extractModsFromLog(crashLog, match.key));
+      setMostSuspiciousLine(
+        getMostSuspiciousLine(crashLog, match.key),
+      );
+    }
+  }
+}}
           />
         </Field>
 
