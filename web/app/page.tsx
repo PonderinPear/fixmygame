@@ -1396,7 +1396,7 @@ function buildSmartFixResultOverride({
 
   const trimmedCrashLog = String(crashLog || "").trim();
 
-    const isStarfieldTrainwreckAccessViolation =
+      const isStarfieldTrainwreckAccessViolation =
     gameKey === "starfield" &&
     lowerCrashLog.includes("starfield") &&
     lowerCrashLog.includes("exception_access_violation") &&
@@ -1442,7 +1442,67 @@ function buildSmartFixResultOverride({
       },
     };
   }
-  
+
+      const isSkyrimNativePluginInventoryCrash =
+    gameKey === "skyrimse" &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("skse plugins:");
+
+  if (isSkyrimNativePluginInventoryCrash) {
+    const probableCallStackMatch = crashLog.match(
+      /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z][A-Z _-]+:|\s*$)/i,
+    );
+
+    const probableCallStack = probableCallStackMatch?.[1] || "";
+
+    const dllInProbableCallStack =
+      probableCallStack.match(/([A-Za-z0-9_.-]+\.dll)/i)?.[1] || "";
+
+    const explicitRuntimeMismatch =
+      /reported as incompatible[\s\S]*?expected runtime[\s\S]*?got/i.test(
+        crashLog,
+      );
+
+    if (!dllInProbableCallStack && !explicitRuntimeMismatch) {
+      const gameVersion =
+        crashLog.match(/Skyrim(?: SSE|SE)?\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+      return {
+        quickFixFirst:
+          "Check SKSE and DLL-plugin compatibility with your current Skyrim runtime before removing any individual plugin.",
+        issue:
+          "Skyrim crashed with EXCEPTION_ACCESS_VIOLATION while multiple SKSE plugins were loaded.",
+        confidenceLevel: "Medium",
+        probabilityBreakdown: [
+          "50% - SKSE or native DLL plugin compatibility issue",
+          "30% - Conflict between loaded native plugins",
+          "20% - Other Skyrim engine, driver, or runtime issue",
+        ],
+        mostLikelyCause:
+          "The crash report shows multiple SKSE/native DLL plugins were loaded, but the probable call stack does not identify one individual plugin as the confirmed crash source.",
+        recommendedFixSteps: [
+          gameVersion
+            ? `Confirm SKSE supports Skyrim ${gameVersion}.`
+            : "Confirm SKSE supports your installed Skyrim runtime.",
+          "Update DLL-based SKSE plugins so they match the current Skyrim and SKSE runtime.",
+          "Check recently installed or recently updated DLL plugins first.",
+          "Do not remove a plugin only because it appears in the SKSE PLUGINS list.",
+          "If everything is current, temporarily disable recently changed DLL plugins one at a time and generate a fresh crash log after each test.",
+        ],
+        needMoreInfo:
+          "A newer crash log with a DLL named in the probable call stack, or an explicit runtime incompatibility message, can support identifying an individual plugin.",
+        detectedSignals: {
+          ...(analysis?.detectedSignals || detectedSignals || {}),
+          errorType: "EXCEPTION_ACCESS_VIOLATION",
+          loader: "SKSE / Mod Manager",
+          gameVersion,
+          suspectedMods: [],
+          likelyCategory: "unknown",
+        },
+      };
+    }
+  }
+
   const looksLikeJsonDataFile =
     (trimmedCrashLog.startsWith("{") && trimmedCrashLog.endsWith("}")) ||
     (trimmedCrashLog.startsWith("[") && trimmedCrashLog.endsWith("]"));
@@ -5255,7 +5315,11 @@ async function acceptAuthorizationGate() {
     displayDetectedSignals?.likelyCategory === "wrong_file_loaded";
 
   const unsafeAutoRepairMods = [
-    "json assets",
+    "trainwreck",
+  "trainwreck.dll",
+  "sfse",
+  "starfield script extender",
+  "json assets",
     "jsonassets",
     "spacecore",
     "content patcher",
