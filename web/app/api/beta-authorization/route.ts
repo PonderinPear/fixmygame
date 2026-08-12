@@ -95,19 +95,6 @@ export async function POST(req: Request) {
     }
 
     const redis = getRedisClient();
-    const lockedDeviceId = await redis.get<string>(
-      `beta:device-lock:${betaId}`,
-    );
-
-    if (!lockedDeviceId || lockedDeviceId !== deviceId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Verify beta access on this device before continuing.",
-        },
-        { status: 403, headers: corsHeaders },
-      );
-    }
 
     const acceptedAt = new Date().toISOString();
 

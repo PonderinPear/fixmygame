@@ -132,27 +132,10 @@ const authorizationAccepted =
     "accepted" in storedAuthorization &&
     (storedAuthorization as { accepted?: unknown }).accepted === true);
 
-const deviceLockKey = `beta:device-lock:${betaId}`;
-    const existingDeviceId = await redis.get<string>(deviceLockKey);
-
-    if (existingDeviceId && existingDeviceId !== deviceId) {
-      return NextResponse.json(
-        {
-          ok: false,
-          code: "beta_id_locked_to_other_device",
-          error:
-            "This Beta ID is already active on another device. If this is your new device, contact FixMyGame support to reset beta access.",
-        },
-        { status: 403, headers: corsHeaders },
-      );
-    }
-
     const now = new Date();
     const verifiedUntil = new Date(
       now.getTime() + VERIFY_DAYS * 24 * 60 * 60 * 1000,
     ).toISOString();
-
-    await redis.set(deviceLockKey, deviceId);
 
     await redis.set(`beta:last-seen:${betaId}`, {
       betaId,
@@ -169,7 +152,7 @@ const deviceLockKey = `beta:device-lock:${betaId}`;
         email,
         deviceId,
         verifiedUntil,
-        deviceLocked: true,
+        deviceLocked: false,
         authorizationAccepted,
       },
       { headers: corsHeaders },
