@@ -1396,6 +1396,53 @@ function buildSmartFixResultOverride({
 
   const trimmedCrashLog = String(crashLog || "").trim();
 
+    const isStarfieldTrainwreckAccessViolation =
+    gameKey === "starfield" &&
+    lowerCrashLog.includes("starfield") &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("trainwreck") &&
+    (lowerCrashLog.includes("script extender plugins") ||
+      lowerCrashLog.includes("sfse_"));
+
+  if (isStarfieldTrainwreckAccessViolation) {
+    const gameVersion =
+      crashLog.match(/Starfield\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+    return {
+      quickFixFirst:
+        "Check that SFSE and every DLL-based Starfield plugin matches your current Starfield version before removing individual mods.",
+      issue:
+        "Starfield crashed with EXCEPTION_ACCESS_VIOLATION while SFSE plugins were loaded.",
+      confidenceLevel: "Medium",
+      probabilityBreakdown: [
+        "55% - SFSE or DLL plugin compatibility issue",
+        "30% - Conflict between loaded native plugins",
+        "15% - Other Starfield engine, driver, or runtime issue",
+      ],
+      mostLikelyCause:
+        "The crash occurred while multiple SFSE/native DLL plugins were loaded, but this Trainwreck report does not identify one individual plugin as the confirmed cause. Trainwreck is the crash logger and should not be treated as the crash source simply because it appears in the report.",
+      recommendedFixSteps: [
+        gameVersion
+          ? `Confirm SFSE supports Starfield ${gameVersion}.`
+          : "Confirm SFSE supports your installed Starfield version.",
+        "Update DLL-based SFSE plugins so they match the current Starfield and SFSE runtime.",
+        "Pay special attention to plugins that were recently installed or updated.",
+        "If everything is current, temporarily disable recently changed DLL plugins one at a time and retest.",
+        "Generate a fresh Trainwreck log after each crash so the results can be compared.",
+      ],
+      needMoreInfo:
+        "A newer crash log after updating or selectively disabling SFSE plugins can help narrow the crash to an individual plugin.",
+      detectedSignals: {
+        ...(analysis?.detectedSignals || detectedSignals || {}),
+        errorType: "EXCEPTION_ACCESS_VIOLATION",
+        loader: "SFSE / Trainwreck",
+        gameVersion,
+        suspectedMods: [],
+        likelyCategory: "unknown",
+      },
+    };
+  }
+  
   const looksLikeJsonDataFile =
     (trimmedCrashLog.startsWith("{") && trimmedCrashLog.endsWith("}")) ||
     (trimmedCrashLog.startsWith("[") && trimmedCrashLog.endsWith("]"));
