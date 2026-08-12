@@ -1455,15 +1455,32 @@ function buildSmartFixResultOverride({
 
     const probableCallStack = probableCallStackMatch?.[1] || "";
 
-    const dllInProbableCallStack =
-      probableCallStack.match(/([A-Za-z0-9_.-]+\.dll)/i)?.[1] || "";
+    const dllsInProbableCallStack = Array.from(
+  probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+).map((match) => match[1].toLowerCase());
+
+const ignoredSystemDlls = new Set([
+  "kernel32.dll",
+  "ntdll.dll",
+  "kernelbase.dll",
+  "user32.dll",
+  "win32u.dll",
+  "ucrtbase.dll",
+  "vcruntime140.dll",
+  "msvcp140.dll",
+]);
+
+const meaningfulDllInProbableCallStack =
+  dllsInProbableCallStack.find(
+    (dll) => !ignoredSystemDlls.has(dll),
+  ) || "";
 
     const explicitRuntimeMismatch =
       /reported as incompatible[\s\S]*?expected runtime[\s\S]*?got/i.test(
         crashLog,
       );
 
-    if (!dllInProbableCallStack && !explicitRuntimeMismatch) {
+    if (!meaningfulDllInProbableCallStack && !explicitRuntimeMismatch) {
       const gameVersion =
         crashLog.match(/Skyrim(?: SSE|SE)?\s+v([0-9.]+)/i)?.[1]?.trim() || "";
 
