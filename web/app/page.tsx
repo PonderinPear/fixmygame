@@ -1520,6 +1520,83 @@ const meaningfulDllInProbableCallStack =
     }
   }
 
+    const isFallout4NativePluginInventoryCrash =
+    gameKey === "fallout4" &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("f4se plugins:");
+
+  if (isFallout4NativePluginInventoryCrash) {
+    const probableCallStackMatch = crashLog.match(
+      /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z][A-Z _-]+:|\s*$)/i,
+    );
+
+    const probableCallStack = probableCallStackMatch?.[1] || "";
+
+    const dllsInProbableCallStack = Array.from(
+      probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+    ).map((match) => match[1].toLowerCase());
+
+    const ignoredSystemDlls = new Set([
+      "kernel32.dll",
+      "ntdll.dll",
+      "kernelbase.dll",
+      "user32.dll",
+      "win32u.dll",
+      "ucrtbase.dll",
+      "vcruntime140.dll",
+      "msvcp140.dll",
+    ]);
+
+    const meaningfulDllInProbableCallStack =
+      dllsInProbableCallStack.find(
+        (dll) => !ignoredSystemDlls.has(dll),
+      ) || "";
+
+    const explicitRuntimeMismatch =
+      /reported as incompatible[\s\S]*?expected runtime[\s\S]*?got/i.test(
+        crashLog,
+      );
+
+    if (!meaningfulDllInProbableCallStack && !explicitRuntimeMismatch) {
+      const gameVersion =
+        crashLog.match(/Fallout\s*4\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+      return {
+        quickFixFirst:
+          "Check F4SE and DLL-plugin compatibility with your current Fallout 4 runtime before removing any individual plugin.",
+        issue:
+          "Fallout 4 crashed with EXCEPTION_ACCESS_VIOLATION while multiple F4SE plugins were loaded.",
+        confidenceLevel: "Medium",
+        probabilityBreakdown: [
+          "50% - F4SE or native DLL plugin compatibility issue",
+          "30% - Conflict between loaded native plugins",
+          "20% - Other Fallout 4 engine, driver, or runtime issue",
+        ],
+        mostLikelyCause:
+          "The crash report shows multiple F4SE/native DLL plugins were loaded, but the probable call stack does not identify one individual plugin as the confirmed crash source. Buffout being present in the F4SE plugin list does not by itself prove Buffout caused the crash.",
+        recommendedFixSteps: [
+          gameVersion
+            ? `Confirm F4SE supports Fallout 4 ${gameVersion}.`
+            : "Confirm F4SE supports your installed Fallout 4 runtime.",
+          "Update DLL-based F4SE plugins so they match the current Fallout 4 and F4SE runtime.",
+          "Check recently installed or recently updated DLL plugins first.",
+          "Do not remove Buffout or another plugin only because it appears in the F4SE PLUGINS list.",
+          "If everything is current, temporarily disable recently changed DLL plugins one at a time and generate a fresh crash log after each test.",
+        ],
+        needMoreInfo:
+          "A newer crash log with a third-party DLL named in the probable call stack, or an explicit runtime incompatibility message, can support identifying an individual plugin.",
+        detectedSignals: {
+          ...(analysis?.detectedSignals || detectedSignals || {}),
+          errorType: "EXCEPTION_ACCESS_VIOLATION",
+          loader: "F4SE / Mod Manager",
+          gameVersion,
+          suspectedMods: [],
+          likelyCategory: "unknown",
+        },
+      };
+    }
+  }
+
   const looksLikeJsonDataFile =
     (trimmedCrashLog.startsWith("{") && trimmedCrashLog.endsWith("}")) ||
     (trimmedCrashLog.startsWith("[") && trimmedCrashLog.endsWith("]"));
@@ -5336,6 +5413,11 @@ async function acceptAuthorizationGate() {
   "trainwreck.dll",
   "sfse",
   "starfield script extender",
+  "buffout",
+  "buffout4",
+  "buffout 4",
+  "f4se",
+  "fallout 4 script extender",
   "json assets",
     "jsonassets",
     "spacecore",
