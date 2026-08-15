@@ -1409,7 +1409,7 @@ detectedSignals: AnalyzeResponse["detectedSignals"] | null;
     );
 
   const nativePluginInventoryPresent =
-    /(?:SKSE|F4SE|SFSE)\s+PLUGINS:/i.test(log);
+  /(?:(?:SKSE|F4SE|SFSE)\s+PLUGINS|SCRIPT EXTENDER PLUGINS):/i.test(log);
 
   const accessViolation =
     lower.includes("exception_access_violation") ||
@@ -2250,7 +2250,7 @@ function buildUniversalFallbackOverride({
       recommendedFixSteps: [
         `Launch ${effectiveGameTitle} again and reproduce the issue.`,
         "Load the newest crash or error log created after the issue happens.",
-        "Remove the most recently added mod/plugin first if the problem started after installing something new.",
+        "Check recently installed or updated mods/plugins first."
       ],
       needMoreInfo:
         "If the issue continues, provide a newer crash log or describe exactly what is still happening in the refinement box.",
