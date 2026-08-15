@@ -120,6 +120,198 @@ type AnalyzeModelResponse = {
   detectedSignals: DetectedSignals;
 };
 
+type EvidencePolicy = {
+  maxConfidence: "Low" | "Medium" | "High";
+  allowNamedCulprit: boolean;
+  allowAutomaticRepair: boolean;
+  evidenceReason: string;
+};
+
+function buildEvidencePolicy(crashLog: string): EvidencePolicy {
+  const log = String(crashLog || "");
+  const lower = log.toLowerCase();
+
+  const probableCallStackMatch = log.match(
+    /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z0-9][A-Z0-9 _-]+:|\s*$)/i,
+  );
+
+  const probableCallStack = probableCallStackMatch?.[1] || "";
+
+  const stackDlls = Array.from(
+    probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+  ).map((match) => match[1].toLowerCase());
+
+  const ignoredSystemDlls = new Set([
+    "kernel32.dll",
+    "kernelbase.dll",
+    "ntdll.dll",
+    "user32.dll",
+    "win32u.dll",
+    "ucrtbase.dll",
+    "vcruntime140.dll",
+    "msvcp140.dll",
+  ]);
+
+  const thirdPartyStackDlls = stackDlls.filter(
+    (dll) => !ignoredSystemDlls.has(dll),
+  );
+
+  const explicitFailureEvidence =
+    /failed to load|could not load|reported as incompatible|unsupported runtime|version mismatch|missing dependency|requires .* version|expected runtime|fatal error.*(?:plugin|mod|dll)/i.test(
+      log,
+    );
+
+  const nativePluginInventoryPresent =
+    /(?:(?:SKSE|F4SE|SFSE)\s+PLUGINS|SCRIPT EXTENDER PLUGINS):/i.test(log);
+
+  const accessViolation =
+    lower.includes("exception_access_violation") ||
+    lower.includes("access violation");
+
+  if (
+    nativePluginInventoryPresent &&
+    accessViolation &&
+    thirdPartyStackDlls.length === 0 &&
+    !explicitFailureEvidence
+  ) {
+    return {
+      maxConfidence: "Medium",
+      allowNamedCulprit: false,
+      allowAutomaticRepair: false,
+      evidenceReason:
+        "The crash shows native plugins were loaded, but no third-party plugin is identified in the probable call stack and no explicit incompatibility or load failure is present.",
+    };
+  }
+
+  if (explicitFailureEvidence) {
+    return {
+      maxConfidence: "High",
+      allowNamedCulprit: true,
+      allowAutomaticRepair: false,
+      evidenceReason:
+        "The log contains explicit failure, incompatibility, dependency, or runtime evidence.",
+    };
+  }
+
+  if (thirdPartyStackDlls.length > 0) {
+    return {
+      maxConfidence: "High",
+      allowNamedCulprit: true,
+      allowAutomaticRepair: false,
+      evidenceReason:
+        "A third-party DLL appears in the probable call stack and can be investigated as a stronger suspect.",
+    };
+  }
+
+  return {
+    maxConfidence: "Medium",
+    allowNamedCulprit: false,
+    allowAutomaticRepair: false,
+    evidenceReason:
+      "The available log evidence does not strongly prove one individual culprit.",
+  };
+}
+
+function enforceEvidencePolicy(
+  analysis: AnalyzeModelResponse,
+  policy: EvidencePolicy,
+): AnalyzeModelResponse {
+  const confidenceRank = {
+    Low: 1,
+    Medium: 2,
+    High: 3,
+  } as const;
+
+  const exceedsConfidence =
+    confidenceRank[analysis.confidenceLevel] >
+    confidenceRank[policy.maxConfidence];
+
+  const shouldSuppressNamedCulprit = !policy.allowNamedCulprit;
+
+  if (!exceedsConfidence && !shouldSuppressNamedCulprit) {
+    return analysis;
+  }
+
+  const saferConfidence = exceedsConfidence
+    ? policy.maxConfidence
+    : analysis.confidenceLevel;
+
+  if (!shouldSuppressNamedCulprit) {
+    return {
+      ...analysis,
+      confidenceLevel: saferConfidence,
+    };
+  }
+
+  return {
+    ...analysis,
+
+    quickFixFirst:
+      "Check version compatibility, dependencies, and recently changed mods/plugins before removing any individual component.",
+
+    issue:
+      "The log shows a real failure, but the available evidence does not safely identify one individual mod or plugin as the confirmed cause.",
+
+    confidenceLevel: saferConfidence,
+
+    probabilityBreakdown: [
+      "Most likely - Compatibility, dependency, or plugin interaction issue",
+      "Possible - Conflict involving one or more loaded mods/plugins",
+      "Possible - Game, runtime, driver, or environment issue",
+    ],
+
+    mostLikelyCause:
+      "The crash evidence supports investigating the mod/plugin environment, but it does not prove that one specific loaded component caused the failure.",
+
+    recommendedFixSteps: [
+      "Check that the game, loader or script extender, frameworks, and native plugins all use compatible versions.",
+      "Check recently installed or recently updated mods/plugins first.",
+      "Use explicit failure lines, dependency errors, or relevant call-stack entries to narrow the suspect list.",
+      "If the log does not identify one culprit, test recent changes one at a time instead of removing an arbitrary listed plugin.",
+      "Run FixMyGame again with the newest log after each controlled test.",
+    ],
+
+    needMoreInfo:
+      "A newer log with an explicit load failure, dependency error, runtime mismatch, or relevant third-party call-stack entry can support identifying an individual culprit.",
+
+    explanation: {
+      whatThisMeans:
+        "FixMyGame found evidence of a real problem, but this log is not specific enough to safely blame one individual mod or plugin.",
+
+      whyFixMyGameThinksThis: [
+        policy.evidenceReason,
+        "Loaded-plugin lists and general module inventories show what was present, not necessarily what caused the crash.",
+        "FixMyGame did not find enough direct causal evidence to safely isolate one component.",
+      ],
+
+      beginnerExplanation:
+        "A crash log can list many mods and plugins simply because they were loaded. Seeing a name in the report does not automatically mean that item caused the crash.",
+
+      doNotDoYet: [
+        "Do not delete or quarantine a specific mod only because its name appears somewhere in the log.",
+        "Do not remove your entire mod setup.",
+        "Do not reinstall the whole game before checking the more targeted compatibility and error evidence.",
+      ],
+
+      stillCrashingNextSteps: [
+        "Reproduce the problem and use the newest crash log.",
+        "Check version compatibility and explicit error lines first.",
+        "Test recently changed mods/plugins one at a time if the log still cannot isolate a culprit.",
+        "Run another diagnostic after each controlled change.",
+      ],
+    },
+
+    detectedSignals: {
+      ...analysis.detectedSignals,
+      suspectedMods: [],
+      likelyCategory:
+        analysis.detectedSignals?.likelyCategory === "mod_conflict"
+          ? "unknown"
+          : analysis.detectedSignals?.likelyCategory || "unknown",
+    },
+  };
+}
+
 function today() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -2229,6 +2421,7 @@ const safeGameKey = typeof gameKey === "string" ? gameKey : "";
 const safeGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
 
 const relevantCrashLog = getRelevantLogWindow(crashLog, safeGameKey);
+const evidencePolicy = buildEvidencePolicy(relevantCrashLog);
 const healthyLogDetected = isHealthyLog(relevantCrashLog, safeGameKey);
 const normalizedRelevantCrashLog = buildSessionFingerprint(relevantCrashLog);const previousRelevantCrashLog =
   typeof continuedDiagnostic?.previousRelevantLog === "string"
@@ -2447,6 +2640,20 @@ Good: "Download and install the Forge version of Just Enough Items (JEI) for Min
 Bad: "Make sure all mods are compatible."
 Good: "Make sure JEI, ExampleMod, and Forge all match Minecraft 1.20.1."
 
+Evidence Safety Policy:
+- Maximum allowed confidence: ${evidencePolicy.maxConfidence}
+- Named individual culprit allowed: ${evidencePolicy.allowNamedCulprit ? "YES" : "NO"}
+- Automatic repair recommendation allowed: ${evidencePolicy.allowAutomaticRepair ? "YES" : "NO"}
+- Reason: ${evidencePolicy.evidenceReason}
+
+Mandatory Evidence Rules:
+- Never exceed the maximum allowed confidence above.
+- If named individual culprit allowed is NO, do not claim that one specific mod, plugin, DLL, framework, or crash logger caused the crash.
+- A plugin appearing only in a loaded-plugin list, load order, SKSE/F4SE/SFSE plugin inventory, or general module list is NOT proof that it caused the crash.
+- A crash logger appearing in its own report is not causal evidence by itself.
+- If the evidence is insufficient to isolate one culprit, say so directly.
+- Do not convert presence in the report into causation.
+- Do not recommend removing or quarantining a specific plugin unless the evidence actually supports that plugin as a suspect.
 
 Context:
 Game: ${safeGameTitle}
@@ -2654,6 +2861,10 @@ detectedSignals: {
   recommendedAction: parsed.detectedSignals?.recommendedAction,
 },
     };
+    const evidenceValidatedNormalized = enforceEvidencePolicy(
+  normalized,
+  evidencePolicy,
+);
     const finalRelevantLog = crashLog || "";
 
     const finalIsStardewAdvisoryOnlyLog =
@@ -2673,7 +2884,7 @@ const finalIsMissingBaseGameFile =
 
 const correctedNormalized: AnalyzeModelResponse = finalIsMissingBaseGameFile
   ? {
-      ...normalized,
+      ...evidenceValidatedNormalized,
       quickFixFirst: "Verify Stardew Valley’s game files through Steam.",
       issue:
         "The game is missing or unable to load required base game files, so it cannot finish launching.",
@@ -2705,7 +2916,7 @@ const correctedNormalized: AnalyzeModelResponse = finalIsMissingBaseGameFile
     }
   : finalIsStardewAdvisoryOnlyLog
   ? {
-      ...normalized,
+      ...evidenceValidatedNormalized,
       quickFixFirst: "No fix needed yet — this Stardew Valley log looks healthy.",
       issue:
         "SMAPI loaded the mods successfully and did not find a real crash, missing dependency, or software conflict.",
@@ -2732,11 +2943,12 @@ const correctedNormalized: AnalyzeModelResponse = finalIsMissingBaseGameFile
         recommendedAction: undefined,
       },
     }
-  : normalized;
-const finalNormalized =
+  : evidenceValidatedNormalized;
+  const finalNormalized =
   correctedNormalized.detectedSignals?.likelyCategory === "advisory_empty_folder" ||
   correctedNormalized.detectedSignals?.likelyCategory === "game_files_corrupt" ||
-  correctedNormalized.detectedSignals?.likelyCategory === "no_clear_issue_found"
+  correctedNormalized.detectedSignals?.likelyCategory === "no_clear_issue_found" ||
+  !evidencePolicy.allowNamedCulprit
     ? correctedNormalized
     : applyForcedSuspiciousMod(
         correctedNormalized,
