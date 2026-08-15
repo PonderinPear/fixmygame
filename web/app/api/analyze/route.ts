@@ -120,6 +120,25 @@ type AnalyzeModelResponse = {
   detectedSignals: DetectedSignals;
 };
 
+type EvidenceStrength = "weak" | "moderate" | "strong";
+
+type CrashEvidence = {
+  exceptionType: string;
+  accessViolation: boolean;
+
+  probableCallStack: string;
+  stackDlls: string[];
+  thirdPartyStackDlls: string[];
+
+  nativePluginInventoryPresent: boolean;
+
+  explicitFailureEvidence: boolean;
+  explicitRuntimeMismatch: boolean;
+  explicitMissingDependency: boolean;
+
+  evidenceStrength: EvidenceStrength;
+};
+
 type EvidencePolicy = {
   maxConfidence: "Low" | "Medium" | "High";
   allowNamedCulprit: boolean;
@@ -127,7 +146,7 @@ type EvidencePolicy = {
   evidenceReason: string;
 };
 
-function buildEvidencePolicy(crashLog: string): EvidencePolicy {
+function extractCrashEvidence(crashLog: string): CrashEvidence {
   const log = String(crashLog || "");
   const lower = log.toLowerCase();
 
@@ -156,23 +175,70 @@ function buildEvidencePolicy(crashLog: string): EvidencePolicy {
     (dll) => !ignoredSystemDlls.has(dll),
   );
 
-  const explicitFailureEvidence =
-    /failed to load|could not load|reported as incompatible|unsupported runtime|version mismatch|missing dependency|requires .* version|expected runtime|fatal error.*(?:plugin|mod|dll)/i.test(
-      log,
+  const exceptionMatch =
+    log.match(
+      /(?:Unhandled exception\s+"?([^"\r\n]+)"?|([A-Za-z0-9_.]+Exception|[A-Za-z0-9_.]+Error))/i,
     );
 
-  const nativePluginInventoryPresent =
-    /(?:(?:SKSE|F4SE|SFSE)\s+PLUGINS|SCRIPT EXTENDER PLUGINS):/i.test(log);
+  const exceptionType =
+    String(exceptionMatch?.[1] || exceptionMatch?.[2] || "").trim();
 
   const accessViolation =
     lower.includes("exception_access_violation") ||
     lower.includes("access violation");
 
+  const nativePluginInventoryPresent =
+    /(?:(?:SKSE|F4SE|SFSE)\s+PLUGINS|SCRIPT EXTENDER PLUGINS):/i.test(log);
+
+  const explicitRuntimeMismatch =
+    /reported as incompatible|unsupported runtime|version mismatch|expected runtime|requires .* version/i.test(
+      log,
+    );
+
+  const explicitMissingDependency =
+    /missing dependency|missing mods|classnotfoundexception|noclassdeffounderror|could not find .* dependency|requires .* dependency/i.test(
+      log,
+    );
+
+  const explicitFailureEvidence =
+    /failed to load|could not load|fatal error.*(?:plugin|mod|dll)/i.test(log) ||
+    explicitRuntimeMismatch ||
+    explicitMissingDependency;
+
+  let evidenceStrength: EvidenceStrength = "weak";
+
+  if (explicitFailureEvidence) {
+    evidenceStrength = "strong";
+  } else if (thirdPartyStackDlls.length > 0) {
+    evidenceStrength = "moderate";
+  } else if (accessViolation || nativePluginInventoryPresent || exceptionType) {
+    evidenceStrength = "weak";
+  }
+
+  return {
+    exceptionType,
+    accessViolation,
+
+    probableCallStack,
+    stackDlls,
+    thirdPartyStackDlls,
+
+    nativePluginInventoryPresent,
+
+    explicitFailureEvidence,
+    explicitRuntimeMismatch,
+    explicitMissingDependency,
+
+    evidenceStrength,
+  };
+}
+
+function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
   if (
-    nativePluginInventoryPresent &&
-    accessViolation &&
-    thirdPartyStackDlls.length === 0 &&
-    !explicitFailureEvidence
+    evidence.nativePluginInventoryPresent &&
+    evidence.accessViolation &&
+    evidence.thirdPartyStackDlls.length === 0 &&
+    !evidence.explicitFailureEvidence
   ) {
     return {
       maxConfidence: "Medium",
@@ -183,7 +249,7 @@ function buildEvidencePolicy(crashLog: string): EvidencePolicy {
     };
   }
 
-  if (explicitFailureEvidence) {
+  if (evidence.explicitFailureEvidence) {
     return {
       maxConfidence: "High",
       allowNamedCulprit: true,
@@ -193,7 +259,7 @@ function buildEvidencePolicy(crashLog: string): EvidencePolicy {
     };
   }
 
-  if (thirdPartyStackDlls.length > 0) {
+  if (evidence.thirdPartyStackDlls.length > 0) {
     return {
       maxConfidence: "High",
       allowNamedCulprit: true,
@@ -2482,7 +2548,9 @@ const safeGameKey = typeof gameKey === "string" ? gameKey : "";
 const safeGameTitle = typeof gameTitle === "string" ? gameTitle : "Unknown Game";
 
 const relevantCrashLog = getRelevantLogWindow(crashLog, safeGameKey);
-const evidencePolicy = buildEvidencePolicy(relevantCrashLog);
+
+const crashEvidence = extractCrashEvidence(relevantCrashLog);
+const evidencePolicy = buildEvidencePolicy(crashEvidence);
 const healthyLogDetected = isHealthyLog(relevantCrashLog, safeGameKey);
 const normalizedRelevantCrashLog = buildSessionFingerprint(relevantCrashLog);const previousRelevantCrashLog =
   typeof continuedDiagnostic?.previousRelevantLog === "string"
