@@ -234,38 +234,39 @@ function extractCrashEvidence(crashLog: string): CrashEvidence {
 }
 
 function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
+  if (evidence.evidenceStrength === "strong") {
+    return {
+      maxConfidence: "High",
+      allowNamedCulprit: true,
+      allowAutomaticRepair: false,
+      evidenceReason: evidence.explicitRuntimeMismatch
+        ? "The log contains an explicit runtime or version mismatch."
+        : evidence.explicitMissingDependency
+          ? "The log contains explicit missing dependency evidence."
+          : "The log contains an explicit failure tied to a mod, plugin, DLL, dependency, or runtime.",
+    };
+  }
+
+  if (evidence.evidenceStrength === "moderate") {
+    return {
+      maxConfidence: "Medium",
+      allowNamedCulprit: false,
+      allowAutomaticRepair: false,
+      evidenceReason:
+        "A third-party DLL appears in the probable call stack, which makes it relevant to investigate, but that alone does not prove it caused the crash.",
+    };
+  }
+
   if (
     evidence.nativePluginInventoryPresent &&
-    evidence.accessViolation &&
-    evidence.thirdPartyStackDlls.length === 0 &&
-    !evidence.explicitFailureEvidence
+    evidence.accessViolation
   ) {
     return {
       maxConfidence: "Medium",
       allowNamedCulprit: false,
       allowAutomaticRepair: false,
       evidenceReason:
-        "The crash shows native plugins were loaded, but no third-party plugin is identified in the probable call stack and no explicit incompatibility or load failure is present.",
-    };
-  }
-
-  if (evidence.explicitFailureEvidence) {
-    return {
-      maxConfidence: "High",
-      allowNamedCulprit: true,
-      allowAutomaticRepair: false,
-      evidenceReason:
-        "The log contains explicit failure, incompatibility, dependency, or runtime evidence.",
-    };
-  }
-
-  if (evidence.thirdPartyStackDlls.length > 0) {
-    return {
-      maxConfidence: "High",
-      allowNamedCulprit: true,
-      allowAutomaticRepair: false,
-      evidenceReason:
-        "A third-party DLL appears in the probable call stack and can be investigated as a stronger suspect.",
+        "The crash shows an access violation while native plugins were loaded, but the available evidence does not identify one individual plugin as the cause.",
     };
   }
 
@@ -274,7 +275,7 @@ function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
     allowNamedCulprit: false,
     allowAutomaticRepair: false,
     evidenceReason:
-      "The available log evidence does not strongly prove one individual culprit.",
+      "The available log evidence is weak and does not safely identify one individual culprit.",
   };
 }
 
