@@ -592,18 +592,6 @@ function getFixPlanDescription(
   return "Follow the recommended steps below. Automatic repair is not available for this result yet.";
 }
 
-function getRiskClasses(risk: FixAction["risk"]) {
-  if (risk === "low") {
-    return "border-emerald-400/20 bg-emerald-400/10 text-emerald-200";
-  }
-
-  if (risk === "medium") {
-    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-200";
-  }
-
-  return "border-red-400/20 bg-red-400/10 text-red-200";
-}
-
 function detectModManagerFromPath(inputPath?: string) {
   const rawPath = String(inputPath || "");
   const lower = rawPath.toLowerCase();
@@ -1372,6 +1360,152 @@ function getStardewEntryCrashMod(crashLog: string) {
   );
 
   return match?.[1]?.trim() || "";
+}
+
+function buildEvidenceSafetyOverride({
+  gameKey,
+  crashLog,
+  analysis,
+  detectedSignals,
+}: {
+  gameKey: string;
+  crashLog: string;
+  analysis: AnalyzeResponse["analysis"] | null;
+detectedSignals: AnalyzeResponse["detectedSignals"] | null;
+}): AnalyzeResponse["analysis"] | null {
+  if (!analysis || !crashLog.trim()) return null;
+
+  const log = String(crashLog || "");
+  const lower = log.toLowerCase();
+
+  const probableCallStackMatch = log.match(
+    /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z0-9][A-Z0-9 _-]+:|\s*$)/i,
+  );
+
+  const probableCallStack = probableCallStackMatch?.[1] || "";
+
+  const stackDlls = Array.from(
+    probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+  ).map((match) => match[1].toLowerCase());
+
+  const ignoredSystemDlls = new Set([
+    "kernel32.dll",
+    "kernelbase.dll",
+    "ntdll.dll",
+    "user32.dll",
+    "win32u.dll",
+    "ucrtbase.dll",
+    "vcruntime140.dll",
+    "msvcp140.dll",
+  ]);
+
+  const meaningfulStackDlls = stackDlls.filter(
+    (dll) => !ignoredSystemDlls.has(dll),
+  );
+
+  const explicitFailureEvidence =
+    /failed to load|could not load|incompatible|unsupported runtime|version mismatch|missing dependency|requires .* version|expected runtime|fatal error.*(?:plugin|mod|dll)/i.test(
+      log,
+    );
+
+  const nativePluginInventoryPresent =
+    /(?:SKSE|F4SE|SFSE)\s+PLUGINS:/i.test(log);
+
+  const accessViolation =
+    lower.includes("exception_access_violation") ||
+    lower.includes("access violation");
+
+  const normalizedSuspects = Array.from(
+    new Set(
+      [
+        ...(analysis?.detectedSignals?.suspectedMods || []),
+        ...(detectedSignals?.suspectedMods || []),
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const suspectHasStrongStackEvidence = normalizedSuspects.some((suspect) => {
+    const normalized = suspect
+      .toLowerCase()
+      .replace(/\.dll$/i, "")
+      .replace(/[^a-z0-9]/g, "");
+
+    if (!normalized) return false;
+
+    return meaningfulStackDlls.some((dll) => {
+      const normalizedDll = dll
+        .replace(/\.dll$/i, "")
+        .replace(/[^a-z0-9]/g, "");
+
+      return normalizedDll === normalized;
+    });
+  });
+
+  const ambiguousNativePluginCrash =
+    nativePluginInventoryPresent &&
+    accessViolation &&
+    !explicitFailureEvidence &&
+    !suspectHasStrongStackEvidence &&
+    meaningfulStackDlls.length === 0;
+
+  if (!ambiguousNativePluginCrash) return null;
+
+  const loader =
+    lower.includes("f4se plugins:")
+      ? "F4SE / Mod Manager"
+      : lower.includes("sfse plugins:") ||
+          lower.includes("script extender plugins:")
+        ? "SFSE / Mod Manager"
+        : lower.includes("skse plugins:")
+          ? "SKSE / Mod Manager"
+          : analysis?.detectedSignals?.loader ||
+            detectedSignals?.loader ||
+            "";
+
+  const gameLabel =
+    gameKey === "fallout4"
+      ? "Fallout 4"
+      : gameKey === "starfield"
+        ? "Starfield"
+        : gameKey === "skyrimse"
+          ? "Skyrim"
+          : "The game";
+
+  return {
+    ...analysis,
+    quickFixFirst:
+      "Check script-extender and DLL-plugin compatibility before removing any individual plugin.",
+    issue: `${gameLabel} crashed with an access violation while multiple native plugins were loaded.`,
+    confidenceLevel: "Medium",
+    probabilityBreakdown: [
+      "Most likely - Script extender or native DLL compatibility issue",
+      "Possible - Conflict between loaded native plugins",
+      "Possible - Game engine, driver, or runtime issue",
+    ],
+    mostLikelyCause:
+      "The crash report confirms that native plugins were loaded, but the available crash evidence does not identify one individual plugin as the confirmed cause.",
+    recommendedFixSteps: [
+      "Confirm the script extender supports your exact installed game version.",
+      "Update native DLL plugins so they match the current game and script-extender runtime.",
+      "Check recently installed or recently updated DLL plugins first.",
+      "Do not remove a plugin only because it appears in the loaded-plugin list.",
+      "If everything is current, test recently changed plugins one at a time and compare the next crash log.",
+    ],
+    needMoreInfo:
+      "A newer crash log with a third-party DLL in the probable call stack or an explicit incompatibility message can support identifying an individual culprit.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType:
+        analysis?.detectedSignals?.errorType ||
+        detectedSignals?.errorType ||
+        "EXCEPTION_ACCESS_VIOLATION",
+      loader,
+      suspectedMods: [],
+      likelyCategory: "unknown",
+    },
+  };
 }
 
 function buildSmartFixResultOverride({
@@ -3768,24 +3902,6 @@ const SORTED_GAME_PRESETS = [
   ...GAME_PRESETS.filter((g) => g.key === "custom"),
 ];
 
-async function fetchDebugWithRetry(retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fetchJSON<{
-        headerVid: string | null;
-        cookieVid: string | null;
-        cookiePro: string | null;
-        resolvedVid: string | null;
-        redisPro: string | null;
-      }>(`${API_BASE_URL}/api/debug-pro`, { method: "GET" });
-    } catch {
-      await new Promise((r) => setTimeout(r, 800));
-    }
-  }
-
-  throw new Error("debug-pro failed");
-}
-
 function getProgressState(params: {
   loadingDesktopLog: boolean;
   scanningLogs: boolean;
@@ -4272,19 +4388,50 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
     [effectiveGameKey, crashLog, currentLogPath, analysis, detectedSignals],
   );
 
-  const universalFallbackOverride = useMemo(
-    () =>
-      buildUniversalFallbackOverride({
-        gameTitle,
-        crashLog,
-        analysis: smartFixResultOverride ?? analysis,
-        detectedSignals,
-      }),
-    [gameTitle, crashLog, analysis, detectedSignals, smartFixResultOverride],
-  );
 
-  const displayAnalysis =
-    smartFixResultOverride ?? universalFallbackOverride ?? analysis;
+  const evidenceSafetyOverride = useMemo(
+  () =>
+    buildEvidenceSafetyOverride({
+      gameKey: effectiveGameKey,
+      crashLog,
+      analysis: smartFixResultOverride ?? analysis,
+      detectedSignals,
+    }),
+  [
+    effectiveGameKey,
+    crashLog,
+    analysis,
+    detectedSignals,
+    smartFixResultOverride,
+  ],
+);
+
+const universalFallbackOverride = useMemo(
+  () =>
+    buildUniversalFallbackOverride({
+      gameTitle,
+      crashLog,
+      analysis:
+        evidenceSafetyOverride ??
+        smartFixResultOverride ??
+        analysis,
+      detectedSignals,
+    }),
+  [
+    gameTitle,
+    crashLog,
+    analysis,
+    detectedSignals,
+    smartFixResultOverride,
+    evidenceSafetyOverride,
+  ],
+);
+
+const displayAnalysis =
+  evidenceSafetyOverride ??
+  smartFixResultOverride ??
+  universalFallbackOverride ??
+  analysis;
 
   const displayDetectedSignals =
     displayAnalysis?.detectedSignals || detectedSignals;
@@ -4308,12 +4455,12 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
   );
 
   const loadedLogSummary = useMemo(
-    () =>
-      buildLoadedLogSummary({
-        crashLog,
-      }),
-    [effectiveGameKey, crashLog],
-  );
+  () =>
+    buildLoadedLogSummary({
+      crashLog,
+    }),
+  [crashLog],
+);
 
   useEffect(() => {
     if (!shouldAutoScrollToResult || !displayAnalysis || !result || running)
@@ -4691,21 +4838,6 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
         error instanceof Error
           ? error.message
           : "Failed to open the download page.",
-      );
-    }
-  }
-
-  function applyDetectedGameOnce(detectedGame: string | null) {
-    if (!appSettings.autoDetectGames) return;
-    if (!detectedGame) return;
-
-    if (!hasAppliedAutoGameDetect && detectedGame !== selectedGameKey) {
-      setSelectedGameKey(detectedGame);
-      setHasAppliedAutoGameDetect(true);
-
-      showActionMessage(
-        `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-        "fixAssistant",
       );
     }
   }
@@ -5136,16 +5268,6 @@ async function runRefinedDiagnosticNow() {
     setResultFollowupTone(null);
   }
 
-  function undoResultRefinement() {
-    setShowDiagnosticRefineBox(false);
-    setDiagnosticRefineMode(null);
-    setDiagnosticRefineText("");
-    setShowAdditionalRefineLogBox(false);
-    setAdditionalRefineLog("");
-    setContinuedDiagnosticBase(null);
-    resetResultFollowupMessage();
-  }
-
 async function acceptAuthorizationGate() {
   if (!supportTelemetryEnabled) {
     setShowError(true);
@@ -5397,8 +5519,6 @@ async function acceptAuthorizationGate() {
     displayAnalysis?.detectedSignals?.likelyCategory ||
     displayDetectedSignals?.likelyCategory ||
     "";
-
-  const isGameFilesCorrupt = activeSafeFixCategory === "game_files_corrupt";
 
   const isMissingDependency = activeSafeFixCategory === "missing_dependency";
 
