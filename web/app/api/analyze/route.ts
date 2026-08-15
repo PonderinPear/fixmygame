@@ -1793,7 +1793,7 @@ function formatPlainText(result: AnalyzeModelResponse) {
     `Confidence Level: ${result.confidenceLevel}`,
     "",
 
-    "Probability Breakdown (must total 100%):",
+    "Likelihood Breakdown:",
     ...result.probabilityBreakdown.map((line) => `- ${line.replace(/^-+\s*/, "")}`),
     "",
 
@@ -2573,11 +2573,12 @@ Expected JSON shape:
 Rules:
 - Prioritize mod conflict analysis over hardware causes when the log suggests mod issues.
 - suspectedMods should be short names only.
-- probabilityBreakdown entries should total 100%.
-- recommendedFixSteps should be practical.
+- probabilityBreakdown should communicate relative likelihood without pretending the percentages are statistically measured.
+- Prefer labels such as "Most likely", "Possible", and "Less likely" when exact probabilities are not supported by deterministic evidence.
 - Do not invent secondary causes just to fill out the probability breakdown.
-- If the crash log points to one clear issue, the probability breakdown should reflect that clearly.
-- When only one issue is strongly supported, use a single 100% entry instead of adding weak extra possibilities.
+- Use numeric percentages only when FixMyGame's deterministic evidence clearly proves or explicitly quantifies the condition.
+- Do not use 100% merely because one explanation seems more plausible than the others.
+- recommendedFixSteps should be practical.
 - If the log shows a normal startup or does not contain a clear crash, missing dependency, or mod failure, DO NOT invent an issue.
 - In that case, return a result indicating "no clear issue found in this log".
 - Explain that the user may need to load a newer crash log captured after the issue happens.
@@ -2795,9 +2796,9 @@ if (healthyLogDetected) {
           ? parsed.confidenceLevel
           : "Medium",
       probabilityBreakdown:
-        Array.isArray(parsed.probabilityBreakdown) && parsed.probabilityBreakdown.length > 0
-          ? parsed.probabilityBreakdown
-          : ["Unknown cause: 100%"],
+  Array.isArray(parsed.probabilityBreakdown) && parsed.probabilityBreakdown.length > 0
+    ? parsed.probabilityBreakdown
+    : ["Uncertain - The available log evidence does not support a precise probability."],
       mostLikelyCause:
         parsed.mostLikelyCause ||
         "A mod conflict, missing dependency, or loader mismatch is likely.",
