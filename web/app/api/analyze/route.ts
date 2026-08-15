@@ -231,29 +231,53 @@ function buildLikelihoodBreakdown(
   });
 }
 
-function enforceEvidencePolicy(
+function isDeterministicResult(
   analysis: AnalyzeModelResponse,
-  policy: EvidencePolicy,
-): AnalyzeModelResponse {
-  const confidenceRank = {
+): boolean {
+  const category = analysis.detectedSignals?.likelyCategory;
+
+  return (
+    category === "no_new_log" ||
+    category === "no_clear_issue_found" ||
+    category === "advisory_empty_folder" ||
+    category === "game_files_corrupt"
+  );
+}
+
+function capConfidenceLevel(
+  confidence: AnalyzeModelResponse["confidenceLevel"],
+  maximum: EvidencePolicy["maxConfidence"],
+): AnalyzeModelResponse["confidenceLevel"] {
+  const rank = {
     Low: 1,
     Medium: 2,
     High: 3,
   } as const;
 
-  const exceedsConfidence =
-    confidenceRank[analysis.confidenceLevel] >
-    confidenceRank[policy.maxConfidence];
+  return rank[confidence] > rank[maximum]
+    ? maximum
+    : confidence;
+}
 
+function enforceEvidencePolicy(
+  analysis: AnalyzeModelResponse,
+  policy: EvidencePolicy,
+): AnalyzeModelResponse {
+    if (isDeterministicResult(analysis)) {
+    return analysis;
+  }
+  const saferConfidence = capConfidenceLevel(
+  analysis.confidenceLevel,
+  policy.maxConfidence,
+);
+
+const exceedsConfidence =
+  saferConfidence !== analysis.confidenceLevel;
   const shouldSuppressNamedCulprit = !policy.allowNamedCulprit;
 
   if (!exceedsConfidence && !shouldSuppressNamedCulprit) {
     return analysis;
   }
-
-  const saferConfidence = exceedsConfidence
-    ? policy.maxConfidence
-    : analysis.confidenceLevel;
 
   if (!shouldSuppressNamedCulprit) {
     return {
