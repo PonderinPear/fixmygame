@@ -212,6 +212,25 @@ function buildEvidencePolicy(crashLog: string): EvidencePolicy {
   };
 }
 
+function buildLikelihoodBreakdown(
+  entries: Array<{
+    label: string;
+    strength: "most_likely" | "possible" | "less_likely";
+  }>,
+): string[] {
+  return entries.map(({ label, strength }) => {
+    if (strength === "most_likely") {
+      return `Most likely - ${label}`;
+    }
+
+    if (strength === "possible") {
+      return `Possible - ${label}`;
+    }
+
+    return `Less likely - ${label}`;
+  });
+}
+
 function enforceEvidencePolicy(
   analysis: AnalyzeModelResponse,
   policy: EvidencePolicy,
@@ -1395,11 +1414,20 @@ let quickFixFirst = "Disable the most recently added or updated mod and test aga
 let issue = `Possible mod conflict or version mismatch in the current ${normalizedGameTitle} setup.`;
 let mostLikelyCause =
   "One or more installed mods or plugins appear incompatible with the current game build or another installed mod.";
-let probabilityBreakdown = [
-  "Mod conflict: 60%",
-  "Version mismatch: 25%",
-  "Missing dependency: 15%",
-];
+let probabilityBreakdown = buildLikelihoodBreakdown([
+  {
+    label: "Mod conflict",
+    strength: "most_likely",
+  },
+  {
+    label: "Version mismatch",
+    strength: "possible",
+  },
+  {
+    label: "Missing dependency",
+    strength: "possible",
+  },
+]);
 let recommendedFixSteps = [
   "Remove the most recently added or updated mod and test launch again.",
   "Check the mod's supported game and loader/plugin versions.",
@@ -1455,11 +1483,20 @@ if (normalizedGameKey === "skyrimse") {
   quickFixFirst = "Disable recently added SKSE plugins or mods, then relaunch.";
   issue = "A Skyrim SE plugin or load-order conflict is likely.";
   mostLikelyCause = "An SKSE plugin, DLL mod, or load-order issue is causing the crash.";
-  probabilityBreakdown = [
-    "Plugin conflict: 55%",
-    "Address Library / SKSE mismatch: 30%",
-    "Load order issue: 15%",
-  ];
+  probabilityBreakdown = buildLikelihoodBreakdown([
+  {
+    label: "Plugin conflict",
+    strength: "most_likely",
+  },
+  {
+    label: "Address Library / SKSE mismatch",
+    strength: "possible",
+  },
+  {
+    label: "Load order issue",
+    strength: "possible",
+  },
+]);
   recommendedFixSteps = [
     "Disable recently installed plugins or DLL mods.",
     "Update SKSE and Address Library.",
@@ -2667,8 +2704,8 @@ Forced Suspicious Mod: ${forcedSuspiciousMod}
 
 Priority Rules:
 - The "Most Suspicious Line" must heavily influence your diagnosis.
-- If "Forced Suspicious Mod" is provided, treat it as the PRIMARY failing mod.
-- Do NOT override the forced mod with other mods unless clearly proven otherwise.
+- If "Forced Suspicious Mod" is provided AND the Evidence Safety Policy allows a named individual culprit, treat it as the primary suspect.
+- Never allow a forced suspicious mod to override an Evidence Safety Policy that forbids naming an individual culprit.
 - If the forced mod references missing classes, treat it as missing dependency or version mismatch.
 - If a class path, package path, mod id, jar name, or namespace appears in the suspicious line, identify the most likely mod tied to it.
 - Prefer naming the exact mod over giving only a generic "mod conflict" answer.
