@@ -930,14 +930,14 @@ function getSmartFixPath(
     }
 
     return {
-      title: "F4SE / Plugin Crash (Fallout 4)",
-      bullets: [
-        "Update F4SE and Buffout if installed.",
-        "Check for outdated or broken plugins.",
-        "Disable recent mods and test.",
-        "Verify load order in your mod manager.",
-      ],
-    };
+  title: "F4SE / Plugin Crash (Fallout 4)",
+  bullets: [
+    "Confirm F4SE supports your installed Fallout 4 version.",
+    "Check native DLL plugin version compatibility.",
+    "Check recently installed or updated DLL plugins first.",
+    "If compatibility checks pass, test recently changed plugins one at a time.",
+  ],
+};
   }
 
   if (gameKey === "cyberpunk2077") {
@@ -1326,8 +1326,7 @@ function getSmartFixPath(
         bullets: [
           analysis?.quickFixFirst ||
             "Start with the most likely fix from the analysis.",
-          "Remove the most recently added or updated mod first.",
-          gameKey === "minecraft"
+            "Check recently installed or updated mods/plugins first.",          gameKey === "minecraft"
             ? "Verify loader, Java, and Minecraft versions all match."
             : "Verify the game version, plugin/mod versions, and dependencies all match.",
           "Retest after each single change so you can isolate the issue.",
@@ -1495,6 +1494,33 @@ detectedSignals: AnalyzeResponse["detectedSignals"] | null;
     ],
     needMoreInfo:
       "A newer crash log with a third-party DLL in the probable call stack or an explicit incompatibility message can support identifying an individual culprit.",
+      explanation: {
+  whatThisMeans:
+    "The game crashed while native script-extender plugins were loaded, but this crash report does not prove that one specific plugin caused the failure.",
+
+  whyFixMyGameThinksThis: [
+    "The log contains an access violation.",
+    "Multiple native script-extender plugins were loaded.",
+    "No third-party plugin DLL is identified as the confirmed culprit in the probable call stack.",
+    "A plugin appearing in the loaded-plugin list is not enough by itself to prove causation.",
+  ],
+
+  beginnerExplanation:
+    "Native plugins extend the game through tools such as SKSE, F4SE, or SFSE. When several are loaded during a crash, the crash log can show that the plugin system was active without proving which individual plugin caused the problem.",
+
+  doNotDoYet: [
+    "Do not remove or reinstall a plugin only because its name appears in the loaded-plugin list.",
+    "Do not delete your whole Mods folder.",
+    "Do not reinstall the entire game before checking runtime and plugin compatibility.",
+  ],
+
+  stillCrashingNextSteps: [
+    "Confirm the script extender and native DLL plugins support your exact game version.",
+    "Check recently installed or recently updated DLL plugins first.",
+    "If everything is current, test recently changed plugins one at a time.",
+    "Run FixMyGame again with the newest crash log after each test.",
+  ],
+},
     detectedSignals: {
       ...(analysis?.detectedSignals || detectedSignals || {}),
       errorType:
@@ -10925,18 +10951,16 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                     : applyingSafeFix
                       ? "Applying Safe Repair..."
                       : !appSettings.enableSafeFix
-                        ? "Safe Repair Disabled in Settings"
-                        : !desktopConnected
-                          ? "Safe Repair Needs Desktop App"
-                          : isWrongFileLoaded
-                            ? "No Repair Target in This File"
-                            : safeFixSuspects.length === 0
-                              ? "No Safe Repair Target Found"
-                              : activeSafeFixCategory !== "mod_conflict"
-                                ? "Safe Repair Not Available for This Result"
-                                : safeFixSuspects.length === 0
-                                  ? "Safe Repair Needs a Suspected Mod"
-                                  : "Apply Safe Repair"}
+  ? "Safe Repair Disabled in Settings"
+  : isWrongFileLoaded
+    ? "No Repair Target in This File"
+    : safeFixSuspects.length === 0
+      ? "No Safe Repair Target Found"
+      : activeSafeFixCategory !== "mod_conflict"
+        ? "Safe Repair Not Available for This Result"
+        : !desktopConnected
+          ? "Safe Repair Needs Desktop App"
+          : "Apply Safe Repair"}
                 </button>
 
                 <button
