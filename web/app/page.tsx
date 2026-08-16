@@ -319,7 +319,7 @@ const APP_AUTH_STORAGE_KEY = "fmg_authorized_device_v2";
 const SYSTEM_PREFS_STORAGE_KEY = "fixmygame:last-system-prefs";
 const SUPPORT_TELEMETRY_STORAGE_KEY = "fixmygame:support-telemetry-enabled";
 
-const FIXMYGAME_APP_VERSION = "1.0.9";
+const FIXMYGAME_APP_VERSION = "1.0.9-beta.1";
 const FIXMYGAME_BUILD_CHANNEL = "beta";
 const FIXMYGAME_BETA_INVITE_URL = "https://fixmygame-site.vercel.app/";
 const FIXMYGAME_BETA_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScGcdRTg2kv4-_NKk1x2MkjSd1QsVItjKxi0ht--HNf1GLngQ/viewform"
@@ -335,6 +335,7 @@ type BetaAccessState = {
   email: string;
   deviceId: string;
   verifiedUntil: string;
+  authorizationAccepted: boolean;
 };
 
 const DEFAULT_BETA_ACCESS: BetaAccessState = {
@@ -342,6 +343,7 @@ const DEFAULT_BETA_ACCESS: BetaAccessState = {
   email: "",
   deviceId: "",
   verifiedUntil: "",
+  authorizationAccepted: false,
 };
 
 function isBetaAccessCurrentlyVerified(access: BetaAccessState) {
@@ -588,18 +590,6 @@ function getFixPlanDescription(
   }
 
   return "Follow the recommended steps below. Automatic repair is not available for this result yet.";
-}
-
-function getRiskClasses(risk: FixAction["risk"]) {
-  if (risk === "low") {
-    return "border-emerald-400/20 bg-emerald-400/10 text-emerald-200";
-  }
-
-  if (risk === "medium") {
-    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-200";
-  }
-
-  return "border-red-400/20 bg-red-400/10 text-red-200";
 }
 
 function detectModManagerFromPath(inputPath?: string) {
@@ -1372,6 +1362,152 @@ function getStardewEntryCrashMod(crashLog: string) {
   return match?.[1]?.trim() || "";
 }
 
+function buildEvidenceSafetyOverride({
+  gameKey,
+  crashLog,
+  analysis,
+  detectedSignals,
+}: {
+  gameKey: string;
+  crashLog: string;
+  analysis: AnalyzeResponse["analysis"] | null;
+detectedSignals: AnalyzeResponse["detectedSignals"] | null;
+}): AnalyzeResponse["analysis"] | null {
+  if (!analysis || !crashLog.trim()) return null;
+
+  const log = String(crashLog || "");
+  const lower = log.toLowerCase();
+
+  const probableCallStackMatch = log.match(
+    /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z0-9][A-Z0-9 _-]+:|\s*$)/i,
+  );
+
+  const probableCallStack = probableCallStackMatch?.[1] || "";
+
+  const stackDlls = Array.from(
+    probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+  ).map((match) => match[1].toLowerCase());
+
+  const ignoredSystemDlls = new Set([
+    "kernel32.dll",
+    "kernelbase.dll",
+    "ntdll.dll",
+    "user32.dll",
+    "win32u.dll",
+    "ucrtbase.dll",
+    "vcruntime140.dll",
+    "msvcp140.dll",
+  ]);
+
+  const meaningfulStackDlls = stackDlls.filter(
+    (dll) => !ignoredSystemDlls.has(dll),
+  );
+
+  const explicitFailureEvidence =
+    /failed to load|could not load|incompatible|unsupported runtime|version mismatch|missing dependency|requires .* version|expected runtime|fatal error.*(?:plugin|mod|dll)/i.test(
+      log,
+    );
+
+  const nativePluginInventoryPresent =
+  /(?:(?:SKSE|F4SE|SFSE)\s+PLUGINS|SCRIPT EXTENDER PLUGINS):/i.test(log);
+
+  const accessViolation =
+    lower.includes("exception_access_violation") ||
+    lower.includes("access violation");
+
+  const normalizedSuspects = Array.from(
+    new Set(
+      [
+        ...(analysis?.detectedSignals?.suspectedMods || []),
+        ...(detectedSignals?.suspectedMods || []),
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const suspectHasStrongStackEvidence = normalizedSuspects.some((suspect) => {
+    const normalized = suspect
+      .toLowerCase()
+      .replace(/\.dll$/i, "")
+      .replace(/[^a-z0-9]/g, "");
+
+    if (!normalized) return false;
+
+    return meaningfulStackDlls.some((dll) => {
+      const normalizedDll = dll
+        .replace(/\.dll$/i, "")
+        .replace(/[^a-z0-9]/g, "");
+
+      return normalizedDll === normalized;
+    });
+  });
+
+  const ambiguousNativePluginCrash =
+    nativePluginInventoryPresent &&
+    accessViolation &&
+    !explicitFailureEvidence &&
+    !suspectHasStrongStackEvidence &&
+    meaningfulStackDlls.length === 0;
+
+  if (!ambiguousNativePluginCrash) return null;
+
+  const loader =
+    lower.includes("f4se plugins:")
+      ? "F4SE / Mod Manager"
+      : lower.includes("sfse plugins:") ||
+          lower.includes("script extender plugins:")
+        ? "SFSE / Mod Manager"
+        : lower.includes("skse plugins:")
+          ? "SKSE / Mod Manager"
+          : analysis?.detectedSignals?.loader ||
+            detectedSignals?.loader ||
+            "";
+
+  const gameLabel =
+    gameKey === "fallout4"
+      ? "Fallout 4"
+      : gameKey === "starfield"
+        ? "Starfield"
+        : gameKey === "skyrimse"
+          ? "Skyrim"
+          : "The game";
+
+  return {
+    ...analysis,
+    quickFixFirst:
+      "Check script-extender and DLL-plugin compatibility before removing any individual plugin.",
+    issue: `${gameLabel} crashed with an access violation while multiple native plugins were loaded.`,
+    confidenceLevel: "Medium",
+    probabilityBreakdown: [
+      "Most likely - Script extender or native DLL compatibility issue",
+      "Possible - Conflict between loaded native plugins",
+      "Possible - Game engine, driver, or runtime issue",
+    ],
+    mostLikelyCause:
+      "The crash report confirms that native plugins were loaded, but the available crash evidence does not identify one individual plugin as the confirmed cause.",
+    recommendedFixSteps: [
+      "Confirm the script extender supports your exact installed game version.",
+      "Update native DLL plugins so they match the current game and script-extender runtime.",
+      "Check recently installed or recently updated DLL plugins first.",
+      "Do not remove a plugin only because it appears in the loaded-plugin list.",
+      "If everything is current, test recently changed plugins one at a time and compare the next crash log.",
+    ],
+    needMoreInfo:
+      "A newer crash log with a third-party DLL in the probable call stack or an explicit incompatibility message can support identifying an individual culprit.",
+    detectedSignals: {
+      ...(analysis?.detectedSignals || detectedSignals || {}),
+      errorType:
+        analysis?.detectedSignals?.errorType ||
+        detectedSignals?.errorType ||
+        "EXCEPTION_ACCESS_VIOLATION",
+      loader,
+      suspectedMods: [],
+      likelyCategory: "unknown",
+    },
+  };
+}
+
 function buildSmartFixResultOverride({
   gameKey,
   crashLog,
@@ -1393,6 +1529,207 @@ function buildSmartFixResultOverride({
   const lowerCrashLog = String(crashLog || "").toLowerCase();
 
   const trimmedCrashLog = String(crashLog || "").trim();
+
+      const isStarfieldTrainwreckAccessViolation =
+    gameKey === "starfield" &&
+    lowerCrashLog.includes("starfield") &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("trainwreck") &&
+    (lowerCrashLog.includes("script extender plugins") ||
+      lowerCrashLog.includes("sfse_"));
+
+  if (isStarfieldTrainwreckAccessViolation) {
+    const gameVersion =
+      crashLog.match(/Starfield\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+    return {
+      quickFixFirst:
+        "Check that SFSE and every DLL-based Starfield plugin matches your current Starfield version before removing individual mods.",
+      issue:
+        "Starfield crashed with EXCEPTION_ACCESS_VIOLATION while SFSE plugins were loaded.",
+      confidenceLevel: "Medium",
+      probabilityBreakdown: [
+        "55% - SFSE or DLL plugin compatibility issue",
+        "30% - Conflict between loaded native plugins",
+        "15% - Other Starfield engine, driver, or runtime issue",
+      ],
+      mostLikelyCause:
+        "The crash occurred while multiple SFSE/native DLL plugins were loaded, but this Trainwreck report does not identify one individual plugin as the confirmed cause. Trainwreck is the crash logger and should not be treated as the crash source simply because it appears in the report.",
+      recommendedFixSteps: [
+        gameVersion
+          ? `Confirm SFSE supports Starfield ${gameVersion}.`
+          : "Confirm SFSE supports your installed Starfield version.",
+        "Update DLL-based SFSE plugins so they match the current Starfield and SFSE runtime.",
+        "Pay special attention to plugins that were recently installed or updated.",
+        "If everything is current, temporarily disable recently changed DLL plugins one at a time and retest.",
+        "Generate a fresh Trainwreck log after each crash so the results can be compared.",
+      ],
+      needMoreInfo:
+        "A newer crash log after updating or selectively disabling SFSE plugins can help narrow the crash to an individual plugin.",
+      detectedSignals: {
+        ...(analysis?.detectedSignals || detectedSignals || {}),
+        errorType: "EXCEPTION_ACCESS_VIOLATION",
+        loader: "SFSE / Trainwreck",
+        gameVersion,
+        suspectedMods: [],
+        likelyCategory: "unknown",
+      },
+    };
+  }
+
+      const isSkyrimNativePluginInventoryCrash =
+    gameKey === "skyrimse" &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("skse plugins:");
+
+  if (isSkyrimNativePluginInventoryCrash) {
+    const probableCallStackMatch = crashLog.match(
+      /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z][A-Z _-]+:|\s*$)/i,
+    );
+
+    const probableCallStack = probableCallStackMatch?.[1] || "";
+
+    const dllsInProbableCallStack = Array.from(
+  probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+).map((match) => match[1].toLowerCase());
+
+const ignoredSystemDlls = new Set([
+  "kernel32.dll",
+  "ntdll.dll",
+  "kernelbase.dll",
+  "user32.dll",
+  "win32u.dll",
+  "ucrtbase.dll",
+  "vcruntime140.dll",
+  "msvcp140.dll",
+]);
+
+const meaningfulDllInProbableCallStack =
+  dllsInProbableCallStack.find(
+    (dll) => !ignoredSystemDlls.has(dll),
+  ) || "";
+
+    const explicitRuntimeMismatch =
+      /reported as incompatible[\s\S]*?expected runtime[\s\S]*?got/i.test(
+        crashLog,
+      );
+
+    if (!meaningfulDllInProbableCallStack && !explicitRuntimeMismatch) {
+      const gameVersion =
+        crashLog.match(/Skyrim(?: SSE|SE)?\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+      return {
+        quickFixFirst:
+          "Check SKSE and DLL-plugin compatibility with your current Skyrim runtime before removing any individual plugin.",
+        issue:
+          "Skyrim crashed with EXCEPTION_ACCESS_VIOLATION while multiple SKSE plugins were loaded.",
+        confidenceLevel: "Medium",
+        probabilityBreakdown: [
+          "50% - SKSE or native DLL plugin compatibility issue",
+          "30% - Conflict between loaded native plugins",
+          "20% - Other Skyrim engine, driver, or runtime issue",
+        ],
+        mostLikelyCause:
+          "The crash report shows multiple SKSE/native DLL plugins were loaded, but the probable call stack does not identify one individual plugin as the confirmed crash source.",
+        recommendedFixSteps: [
+          gameVersion
+            ? `Confirm SKSE supports Skyrim ${gameVersion}.`
+            : "Confirm SKSE supports your installed Skyrim runtime.",
+          "Update DLL-based SKSE plugins so they match the current Skyrim and SKSE runtime.",
+          "Check recently installed or recently updated DLL plugins first.",
+          "Do not remove a plugin only because it appears in the SKSE PLUGINS list.",
+          "If everything is current, temporarily disable recently changed DLL plugins one at a time and generate a fresh crash log after each test.",
+        ],
+        needMoreInfo:
+          "A newer crash log with a DLL named in the probable call stack, or an explicit runtime incompatibility message, can support identifying an individual plugin.",
+        detectedSignals: {
+          ...(analysis?.detectedSignals || detectedSignals || {}),
+          errorType: "EXCEPTION_ACCESS_VIOLATION",
+          loader: "SKSE / Mod Manager",
+          gameVersion,
+          suspectedMods: [],
+          likelyCategory: "unknown",
+        },
+      };
+    }
+  }
+
+    const isFallout4NativePluginInventoryCrash =
+    gameKey === "fallout4" &&
+    lowerCrashLog.includes("exception_access_violation") &&
+    lowerCrashLog.includes("f4se plugins:");
+
+  if (isFallout4NativePluginInventoryCrash) {
+    const probableCallStackMatch = crashLog.match(
+      /PROBABLE CALL STACK:\s*([\s\S]*?)(?:\n\s*[A-Z][A-Z _-]+:|\s*$)/i,
+    );
+
+    const probableCallStack = probableCallStackMatch?.[1] || "";
+
+    const dllsInProbableCallStack = Array.from(
+      probableCallStack.matchAll(/([A-Za-z0-9_.-]+\.dll)/gi),
+    ).map((match) => match[1].toLowerCase());
+
+    const ignoredSystemDlls = new Set([
+      "kernel32.dll",
+      "ntdll.dll",
+      "kernelbase.dll",
+      "user32.dll",
+      "win32u.dll",
+      "ucrtbase.dll",
+      "vcruntime140.dll",
+      "msvcp140.dll",
+    ]);
+
+    const meaningfulDllInProbableCallStack =
+      dllsInProbableCallStack.find(
+        (dll) => !ignoredSystemDlls.has(dll),
+      ) || "";
+
+    const explicitRuntimeMismatch =
+      /reported as incompatible[\s\S]*?expected runtime[\s\S]*?got/i.test(
+        crashLog,
+      );
+
+    if (!meaningfulDllInProbableCallStack && !explicitRuntimeMismatch) {
+      const gameVersion =
+        crashLog.match(/Fallout\s*4\s+v([0-9.]+)/i)?.[1]?.trim() || "";
+
+      return {
+        quickFixFirst:
+          "Check F4SE and DLL-plugin compatibility with your current Fallout 4 runtime before removing any individual plugin.",
+        issue:
+          "Fallout 4 crashed with EXCEPTION_ACCESS_VIOLATION while multiple F4SE plugins were loaded.",
+        confidenceLevel: "Medium",
+        probabilityBreakdown: [
+          "50% - F4SE or native DLL plugin compatibility issue",
+          "30% - Conflict between loaded native plugins",
+          "20% - Other Fallout 4 engine, driver, or runtime issue",
+        ],
+        mostLikelyCause:
+          "The crash report shows multiple F4SE/native DLL plugins were loaded, but the probable call stack does not identify one individual plugin as the confirmed crash source. Buffout being present in the F4SE plugin list does not by itself prove Buffout caused the crash.",
+        recommendedFixSteps: [
+          gameVersion
+            ? `Confirm F4SE supports Fallout 4 ${gameVersion}.`
+            : "Confirm F4SE supports your installed Fallout 4 runtime.",
+          "Update DLL-based F4SE plugins so they match the current Fallout 4 and F4SE runtime.",
+          "Check recently installed or recently updated DLL plugins first.",
+          "Do not remove Buffout or another plugin only because it appears in the F4SE PLUGINS list.",
+          "If everything is current, temporarily disable recently changed DLL plugins one at a time and generate a fresh crash log after each test.",
+        ],
+        needMoreInfo:
+          "A newer crash log with a third-party DLL named in the probable call stack, or an explicit runtime incompatibility message, can support identifying an individual plugin.",
+        detectedSignals: {
+          ...(analysis?.detectedSignals || detectedSignals || {}),
+          errorType: "EXCEPTION_ACCESS_VIOLATION",
+          loader: "F4SE / Mod Manager",
+          gameVersion,
+          suspectedMods: [],
+          likelyCategory: "unknown",
+        },
+      };
+    }
+  }
 
   const looksLikeJsonDataFile =
     (trimmedCrashLog.startsWith("{") && trimmedCrashLog.endsWith("}")) ||
@@ -1913,7 +2250,7 @@ function buildUniversalFallbackOverride({
       recommendedFixSteps: [
         `Launch ${effectiveGameTitle} again and reproduce the issue.`,
         "Load the newest crash or error log created after the issue happens.",
-        "Remove the most recently added mod/plugin first if the problem started after installing something new.",
+        "Check recently installed or updated mods/plugins first."
       ],
       needMoreInfo:
         "If the issue continues, provide a newer crash log or describe exactly what is still happening in the refinement box.",
@@ -3067,11 +3404,22 @@ function detectGameFromLog(log: string): string | null {
   }
 
   if (
+  lower.includes("starfield") ||
+  lower.includes("starfield.exe") ||
+  lower.includes("sfse_") ||
+  lower.includes("starfield script extender") ||
+  lower.includes("bakaachievementenabler") ||
+  lower.includes("starfieldenginefixes") ||
+  lower.includes("trainwreck.dll")
+) {
+  return "starfield";
+}
+
+  if (
     lower.includes("baldur's gate 3") ||
     lower.includes("baldurs gate 3") ||
     lower.includes("bg3") ||
     lower.includes("larian") ||
-    lower.includes("script extender") ||
     lower.includes("gustav") ||
     lower.includes("story compilation error")
   ) {
@@ -3553,24 +3901,6 @@ const SORTED_GAME_PRESETS = [
   ),
   ...GAME_PRESETS.filter((g) => g.key === "custom"),
 ];
-
-async function fetchDebugWithRetry(retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fetchJSON<{
-        headerVid: string | null;
-        cookieVid: string | null;
-        cookiePro: string | null;
-        resolvedVid: string | null;
-        redisPro: string | null;
-      }>(`${API_BASE_URL}/api/debug-pro`, { method: "GET" });
-    } catch {
-      await new Promise((r) => setTimeout(r, 800));
-    }
-  }
-
-  throw new Error("debug-pro failed");
-}
 
 function getProgressState(params: {
   loadingDesktopLog: boolean;
@@ -4058,19 +4388,50 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
     [effectiveGameKey, crashLog, currentLogPath, analysis, detectedSignals],
   );
 
-  const universalFallbackOverride = useMemo(
-    () =>
-      buildUniversalFallbackOverride({
-        gameTitle,
-        crashLog,
-        analysis: smartFixResultOverride ?? analysis,
-        detectedSignals,
-      }),
-    [gameTitle, crashLog, analysis, detectedSignals, smartFixResultOverride],
-  );
 
-  const displayAnalysis =
-    smartFixResultOverride ?? universalFallbackOverride ?? analysis;
+  const evidenceSafetyOverride = useMemo(
+  () =>
+    buildEvidenceSafetyOverride({
+      gameKey: effectiveGameKey,
+      crashLog,
+      analysis: smartFixResultOverride ?? analysis,
+      detectedSignals,
+    }),
+  [
+    effectiveGameKey,
+    crashLog,
+    analysis,
+    detectedSignals,
+    smartFixResultOverride,
+  ],
+);
+
+const universalFallbackOverride = useMemo(
+  () =>
+    buildUniversalFallbackOverride({
+      gameTitle,
+      crashLog,
+      analysis:
+        evidenceSafetyOverride ??
+        smartFixResultOverride ??
+        analysis,
+      detectedSignals,
+    }),
+  [
+    gameTitle,
+    crashLog,
+    analysis,
+    detectedSignals,
+    smartFixResultOverride,
+    evidenceSafetyOverride,
+  ],
+);
+
+const displayAnalysis =
+  evidenceSafetyOverride ??
+  smartFixResultOverride ??
+  universalFallbackOverride ??
+  analysis;
 
   const displayDetectedSignals =
     displayAnalysis?.detectedSignals || detectedSignals;
@@ -4094,12 +4455,12 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
   );
 
   const loadedLogSummary = useMemo(
-    () =>
-      buildLoadedLogSummary({
-        crashLog,
-      }),
-    [effectiveGameKey, crashLog],
-  );
+  () =>
+    buildLoadedLogSummary({
+      crashLog,
+    }),
+  [crashLog],
+);
 
   useEffect(() => {
     if (!shouldAutoScrollToResult || !displayAnalysis || !result || running)
@@ -4481,21 +4842,6 @@ const hasUnlimitedAccess = isPro || betaAccessVerified;
     }
   }
 
-  function applyDetectedGameOnce(detectedGame: string | null) {
-    if (!appSettings.autoDetectGames) return;
-    if (!detectedGame) return;
-
-    if (!hasAppliedAutoGameDetect && detectedGame !== selectedGameKey) {
-      setSelectedGameKey(detectedGame);
-      setHasAppliedAutoGameDetect(true);
-
-      showActionMessage(
-        `Detected game: ${GAME_PROFILES[detectedGame]?.label || detectedGame}`,
-        "fixAssistant",
-      );
-    }
-  }
-
   const proModalContent = useMemo(
     () => getProModalContent(proModalContext, gameTitle),
     [proModalContext, gameTitle],
@@ -4657,6 +5003,7 @@ async function verifyBetaAccess() {
       email?: string;
       deviceId?: string;
       verifiedUntil?: string;
+      authorizationAccepted?: boolean;
       error?: string;
     }>(`${API_BASE_URL}/api/beta-verify`, {
       method: "POST",
@@ -4680,12 +5027,25 @@ async function verifyBetaAccess() {
       email: response.email || email,
       verifiedUntil: response.verifiedUntil || "",
       deviceId: response.deviceId || deviceId,
+      authorizationAccepted: response.authorizationAccepted === true,
     };
 
     setBetaAccess(nextBetaAccess);
     setBetaAccessIdInput(nextBetaAccess.betaId);
     setBetaAccessEmailInput(nextBetaAccess.email);
     setIsBetaAccess(true);
+    setHasAcceptedAuthorization(nextBetaAccess.authorizationAccepted);
+
+if (nextBetaAccess.authorizationAccepted) {
+  setSupportTelemetryEnabled(true);
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
+    window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
+  }
+} else if (typeof window !== "undefined") {
+  window.localStorage.removeItem(APP_AUTH_STORAGE_KEY);
+}
     setBetaAccessMessage("Beta access verified on this device.");
   } catch (error) {
     setBetaAccessMessage(
@@ -4805,7 +5165,7 @@ function submitDiagnosticFeedback(rating: "helpful" | "needs_work") {
   recordEmergencyEvent({
     type: "feedback_submitted",
     sessionId: supportSessionId,
-    appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+    appVersion: FIXMYGAME_APP_VERSION,
     routeVersion: "v2-diagnostic-mapping",
     game: effectiveGameTitle,
     resultCategory:
@@ -4908,29 +5268,53 @@ async function runRefinedDiagnosticNow() {
     setResultFollowupTone(null);
   }
 
-  function undoResultRefinement() {
-    setShowDiagnosticRefineBox(false);
-    setDiagnosticRefineMode(null);
-    setDiagnosticRefineText("");
-    setShowAdditionalRefineLogBox(false);
-    setAdditionalRefineLog("");
-    setContinuedDiagnosticBase(null);
-    resetResultFollowupMessage();
+async function acceptAuthorizationGate() {
+  if (!supportTelemetryEnabled) {
+    setShowError(true);
+    return;
   }
 
-  function acceptAuthorizationGate() {
-    if (!supportTelemetryEnabled) {
-      setShowError(true);
-      return;
+  try {
+    const response = await fetchJSON<{
+      ok: boolean;
+      authorizationAccepted?: boolean;
+      acceptedAt?: string;
+      error?: string;
+    }>(`${API_BASE_URL}/api/beta-authorization`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-fmg-device-id": betaAccess.deviceId,
+      },
+      body: JSON.stringify({
+        betaId: betaAccess.betaId,
+        email: betaAccess.email,
+        deviceId: betaAccess.deviceId,
+      }),
+    });
+
+    if (!response.ok || !response.authorizationAccepted) {
+      throw new Error(response.error || "Unable to save beta approval.");
     }
+
+    const acceptedAccess = {
+      ...betaAccess,
+      authorizationAccepted: true,
+    };
+
+    setBetaAccess(acceptedAccess);
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(APP_AUTH_STORAGE_KEY, "true");
       window.localStorage.setItem(SUPPORT_TELEMETRY_STORAGE_KEY, "true");
     }
 
+    setShowError(false);
     setHasAcceptedAuthorization(true);
+  } catch {
+    setShowError(true);
   }
+}
 
   async function fetchBetaStatus() {
     try {
@@ -5136,8 +5520,6 @@ async function runRefinedDiagnosticNow() {
     displayDetectedSignals?.likelyCategory ||
     "";
 
-  const isGameFilesCorrupt = activeSafeFixCategory === "game_files_corrupt";
-
   const isMissingDependency = activeSafeFixCategory === "missing_dependency";
 
   const isModConflict = activeSafeFixCategory === "mod_conflict";
@@ -5147,7 +5529,16 @@ async function runRefinedDiagnosticNow() {
     displayDetectedSignals?.likelyCategory === "wrong_file_loaded";
 
   const unsafeAutoRepairMods = [
-    "json assets",
+    "trainwreck",
+  "trainwreck.dll",
+  "sfse",
+  "starfield script extender",
+  "buffout",
+  "buffout4",
+  "buffout 4",
+  "f4se",
+  "fallout 4 script extender",
+  "json assets",
     "jsonassets",
     "spacecore",
     "content patcher",
@@ -5825,7 +6216,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "safe_repair_completed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -5862,7 +6253,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "safe_repair_failed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message,
@@ -5884,7 +6275,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
     recordEmergencyEvent({
       type: "undo_clicked",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
@@ -5952,7 +6343,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "undo_clicked",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -6030,7 +6421,7 @@ setDebugProStatus("debug-pro temporarily unavailable");
       recordEmergencyEvent({
         type: "app_error",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message,
@@ -6735,7 +7126,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "diagnostic_started",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       metadata: {
@@ -6806,7 +7197,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       recordEmergencyEvent({
         type: "diagnostic_completed",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         resultCategory:
@@ -6897,7 +7288,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
       recordEmergencyEvent({
         type: "app_error",
         sessionId: supportSessionId,
-        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+        appVersion: FIXMYGAME_APP_VERSION,
         routeVersion: "v2-diagnostic-mapping",
         game: effectiveGameTitle,
         message: msg,
@@ -7471,7 +7862,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               onChange={(event) =>
                 setBetaAccessIdInput(event.target.value.toUpperCase())
               }
-              placeholder="FMG-BETA-0001"
+              placeholder="FMG-0000"
               autoComplete="off"
               className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none placeholder:text-white/25 focus:border-violet-400/50"
             />
@@ -7494,6 +7885,16 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
             ? "Verifying access..."
             : "Verify beta access"}
         </button>
+        <p className="mt-4 text-center text-sm text-white/55">
+  Don&apos;t have approved access?{" "}
+  <button
+    type="button"
+    onClick={openBetaFormPage}
+    className="font-medium text-violet-300 underline decoration-violet-300/40 underline-offset-4 transition hover:text-violet-200"
+  >
+    Request beta access
+  </button>
+</p>
       </div>
     </main>
   );
@@ -7572,14 +7973,6 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     : "Private Beta"}
         </span>
 
-        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-white/80">
-          {isPro
-  ? "Unlimited Pro Access"
-  : betaAccessVerified
-    ? "Beta Access Verified"
-    : "Access Required"}
-        </span>
-
         <span
           className={[
             "rounded-full px-3 py-1 text-xs font-medium",
@@ -7633,12 +8026,27 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
             value={gameTitle}
             options={SORTED_GAME_PRESETS.map((g) => g.label)}
             onChange={(label) => {
-              const match = SORTED_GAME_PRESETS.find((g) => g.label === label);
-              if (match) {
-                setSelectedGameKey(match.key);
-                setHasAppliedAutoGameDetect(true);
-              }
-            }}
+  const match = SORTED_GAME_PRESETS.find((g) => g.label === label);
+
+  if (match) {
+    setSelectedGameKey(match.key);
+
+    // Manual selection overrides any prior auto-detected game.
+    setDetectedGameKey(null);
+    setAutoDetectNotice("");
+    setHasAppliedAutoGameDetect(true);
+
+    // Recalculate the visible log signals using the user's chosen game.
+    if (crashLog.trim()) {
+      setQuickSignals(quickDetect(crashLog, match.key));
+      setLogHighlights(extractLogHighlights(crashLog, match.key));
+      setLiveMods(extractModsFromLog(crashLog, match.key));
+      setMostSuspiciousLine(
+        getMostSuspiciousLine(crashLog, match.key),
+      );
+    }
+  }
+}}
           />
         </Field>
 
@@ -8264,7 +8672,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                     recordEmergencyEvent({
                       type: "safe_repair_previewed",
                       sessionId: supportSessionId,
-                      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                      appVersion: FIXMYGAME_APP_VERSION,
                       routeVersion: "v2-diagnostic-mapping",
                       game: effectiveGameTitle,
                       resultCategory:
@@ -8464,7 +8872,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                       recordEmergencyEvent({
                         type: "safe_repair_previewed",
                         sessionId: supportSessionId,
-                        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                        appVersion: FIXMYGAME_APP_VERSION,
                         routeVersion: "v2-diagnostic-mapping",
                         game: effectiveGameTitle,
                         resultCategory:
@@ -8794,7 +9202,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                       recordEmergencyEvent({
                         type: "safe_repair_previewed",
                         sessionId: supportSessionId,
-                        appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                        appVersion: FIXMYGAME_APP_VERSION,
                         routeVersion: "v2-diagnostic-mapping",
                         game: effectiveGameTitle,
                         resultCategory:
@@ -9401,7 +9809,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "fixed_it_clicked",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
@@ -9441,7 +9849,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
                         recordEmergencyEvent({
                           type: "still_crashing_clicked",
                           sessionId: supportSessionId,
-                          appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                          appVersion: FIXMYGAME_APP_VERSION,
                           routeVersion: "v2-diagnostic-mapping",
                           game: effectiveGameTitle,
                           metadata: {
@@ -10605,7 +11013,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               recordEmergencyEvent({
                 type: "fixed_it_clicked",
                 sessionId: supportSessionId,
-                appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                appVersion: FIXMYGAME_APP_VERSION,
                 routeVersion: "v2-diagnostic-mapping",
                 game: effectiveGameTitle,
                 resultCategory:
@@ -10653,7 +11061,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
               recordEmergencyEvent({
                 type: "still_crashing_after_fix",
                 sessionId: supportSessionId,
-                appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+                appVersion: FIXMYGAME_APP_VERSION,
                 routeVersion: "v2-diagnostic-mapping",
                 game: effectiveGameTitle,
                 metadata: {
@@ -11051,7 +11459,7 @@ if (requiredVersion && requiredVersion !== FIXMYGAME_APP_VERSION) {
     recordEmergencyEvent({
       type: "feedback_submitted",
       sessionId: supportSessionId,
-      appVersion: `${FIXMYGAME_APP_VERSION}-${FIXMYGAME_BUILD_CHANNEL}`,
+      appVersion: FIXMYGAME_APP_VERSION,
       routeVersion: "v2-diagnostic-mapping",
       game: effectiveGameTitle,
       resultCategory:
