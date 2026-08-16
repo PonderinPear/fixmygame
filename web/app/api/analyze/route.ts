@@ -150,6 +150,13 @@ type EvidencePolicy = {
   evidenceReason: string;
 };
 
+type RepairEligibility = {
+  eligible: boolean;
+  action: "none" | "quarantine_mod";
+  suspect: string;
+  reason: string;
+};
+
 function extractCrashEvidence(crashLog: string): CrashEvidence {
   const log = String(crashLog || "");
   const lower = log.toLowerCase();
@@ -533,6 +540,75 @@ const exceedsConfidence =
           ? "unknown"
           : analysis.detectedSignals?.likelyCategory || "unknown",
     },
+  };
+}
+
+function buildRepairEligibility(
+  analysis: AnalyzeModelResponse,
+  policy: EvidencePolicy,
+): RepairEligibility {
+  const suspectedMods = Array.isArray(
+    analysis.detectedSignals?.suspectedMods,
+  )
+    ? analysis.detectedSignals.suspectedMods.filter(Boolean)
+    : [];
+
+  if (!policy.allowAutomaticRepair) {
+    return {
+      eligible: false,
+      action: "none",
+      suspect: "",
+      reason:
+        "Automatic repair is not authorized by the current evidence policy.",
+    };
+  }
+
+  if (!policy.allowNamedCulprit) {
+    return {
+      eligible: false,
+      action: "none",
+      suspect: "",
+      reason:
+        "FixMyGame does not have enough evidence to confirm one individual culprit.",
+    };
+  }
+
+  if (analysis.confidenceLevel !== "High") {
+    return {
+      eligible: false,
+      action: "none",
+      suspect: "",
+      reason:
+        "Automatic repair requires High diagnostic confidence.",
+    };
+  }
+
+  if (analysis.detectedSignals?.likelyCategory !== "mod_conflict") {
+    return {
+      eligible: false,
+      action: "none",
+      suspect: "",
+      reason:
+        "The current diagnosis is not an eligible mod-conflict repair case.",
+    };
+  }
+
+  if (suspectedMods.length !== 1) {
+    return {
+      eligible: false,
+      action: "none",
+      suspect: "",
+      reason:
+        "Automatic repair requires exactly one confirmed repair candidate.",
+    };
+  }
+
+  return {
+    eligible: true,
+    action: "quarantine_mod",
+    suspect: suspectedMods[0],
+    reason:
+      "The diagnosis has one confirmed mod-conflict candidate and meets the current automatic-repair requirements.",
   };
 }
 
@@ -3225,12 +3301,18 @@ const correctedNormalized: AnalyzeModelResponse = finalIsMissingBaseGameFile
       : buildDefaultExplanation(finalNormalized),
 };
 
+const repairEligibility = buildRepairEligibility(
+  finalWithExplanation,
+  evidencePolicy,
+);
+
 const result = formatPlainText(finalWithExplanation);
 
 const res = jsonResponse({
   result,
   analysis: finalWithExplanation,
   detectedSignals: finalWithExplanation.detectedSignals,
+  repairEligibility,
   isPro,
   remaining: isPro ? Infinity : Math.max(0, DAILY_LIMIT - count),
 });
