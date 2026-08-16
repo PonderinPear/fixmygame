@@ -157,6 +157,65 @@ type RepairEligibility = {
   reason: string;
 };
 
+const PROTECTED_COMPONENTS = new Set([
+  // Game executables / core runtime
+  "starfield.exe",
+  "skyrimse.exe",
+  "fallout4.exe",
+  "minecraft",
+  "java",
+  "javaw.exe",
+
+  // Script extenders / loaders
+  "skse",
+  "skse64",
+  "skse64_loader.exe",
+  "f4se",
+  "f4se_loader.exe",
+  "sfse",
+  "sfse_loader.exe",
+
+  // Crash loggers / diagnostic tooling
+  "trainwreck",
+  "trainwreck.dll",
+  "buffout4",
+  "buffout4.dll",
+  "crashlogger",
+  "crashlogger.dll",
+  "crashloggersse",
+  "crashloggersse.dll",
+
+  // Core framework / loader components
+  "forge",
+  "fabric",
+  "fabric-api",
+  "quilt",
+  "smapi",
+]);
+
+function normalizeRepairCandidate(value: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^.*[\\/]/, "");
+}
+
+function isProtectedRepairCandidate(value: string) {
+  const normalized = normalizeRepairCandidate(value);
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (PROTECTED_COMPONENTS.has(normalized)) {
+    return true;
+  }
+
+  const withoutDll = normalized.replace(/\.dll$/i, "");
+
+  return PROTECTED_COMPONENTS.has(withoutDll);
+}
+
 function extractCrashEvidence(crashLog: string): CrashEvidence {
   const log = String(crashLog || "");
   const lower = log.toLowerCase();
@@ -594,22 +653,34 @@ function buildRepairEligibility(
   }
 
   if (suspectedMods.length !== 1) {
-    return {
-      eligible: false,
-      action: "none",
-      suspect: "",
-      reason:
-        "Automatic repair requires exactly one confirmed repair candidate.",
-    };
-  }
-
   return {
-    eligible: true,
-    action: "quarantine_mod",
-    suspect: suspectedMods[0],
+    eligible: false,
+    action: "none",
+    suspect: "",
     reason:
-      "The diagnosis has one confirmed mod-conflict candidate and meets the current automatic-repair requirements.",
+      "Automatic repair requires exactly one confirmed repair candidate.",
   };
+}
+
+const repairCandidate = suspectedMods[0];
+
+if (isProtectedRepairCandidate(repairCandidate)) {
+  return {
+    eligible: false,
+    action: "none",
+    suspect: repairCandidate,
+    reason:
+      "The confirmed suspect is a protected core, loader, framework, script-extender, or diagnostic component and cannot be automatically quarantined.",
+  };
+}
+
+return {
+  eligible: true,
+  action: "quarantine_mod",
+  suspect: repairCandidate,
+  reason:
+    "The diagnosis has one confirmed non-protected mod-conflict candidate and meets the current automatic-repair requirements.",
+};
 }
 
 function today() {
