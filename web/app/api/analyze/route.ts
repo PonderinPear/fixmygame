@@ -141,7 +141,11 @@ type CrashEvidence = {
 
 type EvidencePolicy = {
   maxConfidence: "Low" | "Medium" | "High";
+
+  allowNamedSuspect: boolean;
   allowNamedCulprit: boolean;
+  allowedNamedSuspects: string[];
+
   allowAutomaticRepair: boolean;
   evidenceReason: string;
 };
@@ -237,8 +241,13 @@ function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
   if (evidence.evidenceStrength === "strong") {
     return {
       maxConfidence: "High",
+
+      allowNamedSuspect: true,
       allowNamedCulprit: true,
+      allowedNamedSuspects: evidence.thirdPartyStackDlls,
+
       allowAutomaticRepair: false,
+
       evidenceReason: evidence.explicitRuntimeMismatch
         ? "The log contains an explicit runtime or version mismatch."
         : evidence.explicitMissingDependency
@@ -250,10 +259,15 @@ function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
   if (evidence.evidenceStrength === "moderate") {
     return {
       maxConfidence: "Medium",
+
+      allowNamedSuspect: true,
       allowNamedCulprit: false,
+      allowedNamedSuspects: evidence.thirdPartyStackDlls,
+
       allowAutomaticRepair: false,
+
       evidenceReason:
-        "A third-party DLL appears in the probable call stack, which makes it relevant to investigate, but that alone does not prove it caused the crash.",
+        "A third-party DLL appears in the probable call stack, so it can be investigated as a suspect, but the stack entry alone does not prove that it caused the crash.",
     };
   }
 
@@ -263,8 +277,13 @@ function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
   ) {
     return {
       maxConfidence: "Medium",
+
+      allowNamedSuspect: false,
       allowNamedCulprit: false,
+      allowedNamedSuspects: [],
+
       allowAutomaticRepair: false,
+
       evidenceReason:
         "The crash shows an access violation while native plugins were loaded, but the available evidence does not identify one individual plugin as the cause.",
     };
@@ -272,8 +291,13 @@ function buildEvidencePolicy(evidence: CrashEvidence): EvidencePolicy {
 
   return {
     maxConfidence: "Medium",
+
+    allowNamedSuspect: false,
     allowNamedCulprit: false,
+    allowedNamedSuspects: [],
+
     allowAutomaticRepair: false,
+
     evidenceReason:
       "The available log evidence is weak and does not safely identify one individual culprit.",
   };
@@ -345,6 +369,96 @@ const exceedsConfidence =
   if (!exceedsConfidence && !shouldSuppressNamedCulprit) {
     return analysis;
   }
+
+  if (
+  shouldSuppressNamedCulprit &&
+  policy.allowNamedSuspect &&
+  policy.allowedNamedSuspects.length > 0
+) {
+  const normalizedAllowedSuspects = new Set(
+    policy.allowedNamedSuspects.map((name) =>
+      name.toLowerCase().replace(/\.dll$/i, "")
+    ),
+  );
+
+  const safeSuspectedMods =
+    analysis.detectedSignals?.suspectedMods.filter((name) => {
+      const normalizedName = name
+        .toLowerCase()
+        .replace(/\.dll$/i, "");
+
+      return normalizedAllowedSuspects.has(normalizedName);
+    }) || [];
+
+  const displaySuspects =
+    policy.allowedNamedSuspects.join(", ");
+
+  return {
+    ...analysis,
+
+    quickFixFirst:
+      "Check the named crash-stack component for version compatibility before changing or removing it.",
+
+    issue:
+      `${displaySuspects} appears in the probable crash stack and is relevant to investigate, but the log does not prove that it caused the crash.`,
+
+    confidenceLevel: saferConfidence,
+
+    probabilityBreakdown: [
+      `Most likely suspect - ${displaySuspects}`,
+      "Possible - Interaction with another loaded plugin or framework",
+      "Possible - Game, runtime, driver, or environment issue",
+    ],
+
+    mostLikelyCause:
+      `${displaySuspects} is a relevant crash-stack suspect, but more evidence is required before FixMyGame can call it the confirmed culprit.`,
+
+    recommendedFixSteps: [
+      `Check whether ${displaySuspects} supports the exact installed game and script-extender/runtime version.`,
+      "Check whether the component was recently installed or updated.",
+      "Look for an explicit load failure, incompatibility message, or repeated stack evidence before removing it.",
+      "If necessary, test the suspect in isolation and then generate a fresh crash log.",
+    ],
+
+    needMoreInfo:
+      "An explicit plugin failure, incompatibility message, repeated crash-stack evidence, or controlled test result would be needed to confirm the culprit.",
+
+    explanation: {
+      whatThisMeans:
+        "FixMyGame found a specific third-party component in the relevant crash stack. That makes it worth investigating, but a stack appearance by itself is not proof of causation.",
+
+      whyFixMyGameThinksThis: [
+        policy.evidenceReason,
+        `Relevant third-party crash-stack component: ${displaySuspects}.`,
+        "FixMyGame is treating the component as a suspect rather than a confirmed cause.",
+      ],
+
+      beginnerExplanation:
+        "A crash stack shows what code was involved around the time of a crash. A plugin appearing there is more meaningful than simply appearing in a loaded-plugin list, but it still does not automatically mean that plugin caused the crash.",
+
+      doNotDoYet: [
+        `Do not permanently delete ${displaySuspects} based only on this stack entry.`,
+        "Do not remove unrelated plugins just because they were loaded.",
+        "Do not reinstall the whole game before checking compatibility and reproducing the crash.",
+      ],
+
+      stillCrashingNextSteps: [
+        "Check the suspect's game/runtime compatibility.",
+        "Test the suspect separately if needed.",
+        "Generate a fresh crash log after the controlled test.",
+        "Run FixMyGame again to see whether the same component remains in the relevant crash evidence.",
+      ],
+    },
+
+    detectedSignals: {
+      ...analysis.detectedSignals,
+      suspectedMods:
+        safeSuspectedMods.length > 0
+          ? safeSuspectedMods
+          : policy.allowedNamedSuspects,
+    },
+  };
+}
 
   if (!shouldSuppressNamedCulprit) {
     return {
@@ -2776,6 +2890,12 @@ Evidence Safety Policy:
 - Named individual culprit allowed: ${evidencePolicy.allowNamedCulprit ? "YES" : "NO"}
 - Automatic repair recommendation allowed: ${evidencePolicy.allowAutomaticRepair ? "YES" : "NO"}
 - Reason: ${evidencePolicy.evidenceReason}
+- Named suspect allowed: ${evidencePolicy.allowNamedSuspect ? "YES" : "NO"}
+- Allowed named suspects: ${
+  evidencePolicy.allowedNamedSuspects.length > 0
+    ? evidencePolicy.allowedNamedSuspects.join(", ")
+    : "none"
+}
 
 Mandatory Evidence Rules:
 - Never exceed the maximum allowed confidence above.
@@ -2785,6 +2905,9 @@ Mandatory Evidence Rules:
 - If the evidence is insufficient to isolate one culprit, say so directly.
 - Do not convert presence in the report into causation.
 - Do not recommend removing or quarantining a specific plugin unless the evidence actually supports that plugin as a suspect.
+- A named suspect is not the same thing as a confirmed culprit.
+- If named suspect allowed is YES but named individual culprit allowed is NO, you may say the listed component is relevant, suspicious, or worth investigating, but you must not say it caused the crash.
+- Do not name components outside the allowed named suspects list unless stronger explicit evidence identifies them.
 
 Context:
 Game: ${safeGameTitle}
